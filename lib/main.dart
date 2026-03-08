@@ -8,8 +8,10 @@ String get defaultModelPath {
   if (defaultTargetPlatform == TargetPlatform.android) {
     return '/sdcard/Download/tiny-aya-global-q4_k_m.gguf';
   }
-  if (defaultTargetPlatform == TargetPlatform.iOS) return '';
-  // Desktop (Windows/Linux/macOS)
+  if (defaultTargetPlatform == TargetPlatform.iOS) {
+    return '/var/mobile/Documents/tiny-aya-global-q4_k_m.gguf';
+  }
+  // Desktop (Windows/Linux/macOS) — place model in project root or CWD
   return 'tiny-aya-global-q4_k_m.gguf';
 }
 
