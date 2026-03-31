@@ -1,10 +1,13 @@
-import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'chat/chat_screen.dart';
 
+/// Context window size for the model (in tokens).
+const int kContextSize = 1024;
+
 /// Default model path per platform.
 String get defaultModelPath {
-  if (kIsWeb) return '';
   if (defaultTargetPlatform == TargetPlatform.android) {
     return '/sdcard/Download/tiny-aya-global-q4_k_m.gguf';
   }
@@ -39,6 +42,7 @@ class AyaApp extends StatelessWidget {
       ),
       home: ChatScreen(
         modelPath: defaultModelPath,
+        contextSize: kContextSize,
       ),
     );
   }
