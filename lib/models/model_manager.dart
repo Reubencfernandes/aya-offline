@@ -22,6 +22,10 @@ class ModelManager {
     return '${dir.path}/${model.fileName}';
   }
 
+  static Future<String> _partialModelPath(AyaModel model) async {
+    return '${await modelPath(model)}.part';
+  }
+
   /// Check if a model is already downloaded.
   static Future<bool> isDownloaded(AyaModel model) async {
     final path = await modelPath(model);
@@ -31,21 +35,27 @@ class ModelManager {
   /// List all downloaded model file names.
   static Future<List<String>> downloadedFiles() async {
     final dir = await _modelsDir;
-    if (!await dir.exists()) return [];
+    if (!await dir.exists()) {
+      return [];
+    }
+
     return dir
         .listSync()
         .whereType<File>()
-        .where((f) => f.path.endsWith('.gguf'))
-        .map((f) => f.uri.pathSegments.last)
+        .where((file) => file.path.endsWith('.gguf'))
+        .map((file) => file.uri.pathSegments.last)
         .toList();
   }
 
   /// Find the first downloaded model (for auto-loading on startup).
   static Future<AyaModel?> firstDownloaded() async {
     final files = await downloadedFiles();
-    if (files.isEmpty) return null;
+    if (files.isEmpty) {
+      return null;
+    }
+
     try {
-      return ayaModels.firstWhere((m) => files.contains(m.fileName));
+      return ayaModels.firstWhere((model) => files.contains(model.fileName));
     } catch (_) {
       return null;
     }
@@ -56,59 +66,164 @@ class ModelManager {
   static Future<String> download(
     AyaModel model, {
     void Function(int received, int total)? onProgress,
+    void Function(String status)? onStatus,
   }) async {
-    final path = await modelPath(model);
-    final file = File(path);
-
-    // Resume partial download if possible.
-    int existingBytes = 0;
-    if (await file.exists()) {
-      existingBytes = await file.length();
+    final finalPath = await modelPath(model);
+    final finalFile = File(finalPath);
+    if (await finalFile.exists()) {
+      return finalPath;
     }
 
-    final client = HttpClient();
-    try {
-      final request = await client.getUrl(Uri.parse(model.downloadUrl));
-      if (existingBytes > 0) {
-        request.headers.set('Range', 'bytes=$existingBytes-');
+    final partialFile = File(await _partialModelPath(model));
+    const maxAttempts = 5;
+
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      final existingBytes = await partialFile.exists()
+          ? await partialFile.length()
+          : 0;
+      final client = HttpClient();
+      IOSink? sink;
+
+      try {
+        if (existingBytes > 0) {
+          onStatus?.call(
+            attempt == 1
+                ? 'Resuming download...'
+                : 'Retrying download... ($attempt/$maxAttempts)',
+          );
+        } else if (attempt > 1) {
+          onStatus?.call('Retrying download... ($attempt/$maxAttempts)');
+        }
+
+        final request = await client.getUrl(Uri.parse(model.downloadUrl));
+        if (existingBytes > 0) {
+          request.headers.set('Range', 'bytes=$existingBytes-');
+        }
+
+        final response = await request.close();
+        if (response.statusCode != HttpStatus.ok &&
+            response.statusCode != HttpStatus.partialContent) {
+          throw HttpException(
+            'Download failed with HTTP ${response.statusCode}',
+            uri: Uri.parse(model.downloadUrl),
+          );
+        }
+
+        final resuming = response.statusCode == HttpStatus.partialContent;
+        var received = existingBytes;
+        if (!resuming && existingBytes > 0) {
+          if (await partialFile.exists()) {
+            await partialFile.delete();
+          }
+          received = 0;
+        }
+
+        final totalBytes = response.contentLength > 0
+            ? received + response.contentLength
+            : -1;
+
+        sink = partialFile.openWrite(
+          mode: resuming ? FileMode.append : FileMode.write,
+        );
+
+        await for (final chunk in response) {
+          sink.add(chunk);
+          received += chunk.length;
+          onProgress?.call(received, totalBytes);
+        }
+
+        await sink.flush();
+        await sink.close();
+        sink = null;
+
+        if (await finalFile.exists()) {
+          await finalFile.delete();
+        }
+
+        await partialFile.rename(finalPath);
+        return finalPath;
+      } on FileSystemException catch (error) {
+        if (sink != null) {
+          await sink.flush();
+          await sink.close();
+        }
+
+        if (_isOutOfSpace(error)) {
+          if (await partialFile.exists()) {
+            await partialFile.delete();
+          }
+
+          throw Exception(
+            'Not enough storage. ${model.displayName} ${model.quant} needs about '
+            '${_formatStorage(model.sizeMB)} free on the device.',
+          );
+        }
+
+        rethrow;
+      } catch (error) {
+        if (sink != null) {
+          await sink.flush();
+          await sink.close();
+        }
+
+        if (!_isRetryableDownloadError(error) || attempt == maxAttempts) {
+          throw Exception(
+            'Download interrupted. Please try again. Original error: $error',
+          );
+        }
+
+        await Future<void>.delayed(Duration(seconds: attempt));
+      } finally {
+        client.close(force: true);
       }
-      final response = await request.close();
-
-      // If server doesn't support range or file is complete, start fresh.
-      final bool resuming = response.statusCode == 206;
-      final int totalBytes;
-      if (resuming) {
-        totalBytes = existingBytes + response.contentLength;
-      } else {
-        existingBytes = 0;
-        totalBytes = response.contentLength;
-      }
-
-      final sink = file.openWrite(
-        mode: resuming ? FileMode.append : FileMode.write,
-      );
-
-      int received = existingBytes;
-      await for (final chunk in response) {
-        sink.add(chunk);
-        received += chunk.length;
-        onProgress?.call(received, totalBytes);
-      }
-      await sink.flush();
-      await sink.close();
-
-      return path;
-    } finally {
-      client.close();
     }
+
+    throw Exception('Download failed after multiple retry attempts.');
+  }
+
+  static bool _isOutOfSpace(FileSystemException error) {
+    final code = error.osError?.errorCode;
+    final message = error.message.toLowerCase();
+    final osMessage = error.osError?.message.toLowerCase() ?? '';
+    return code == 28 ||
+        message.contains('no space') ||
+        osMessage.contains('no space');
+  }
+
+  static bool _isRetryableDownloadError(Object error) {
+    if (error is SocketException ||
+        error is HandshakeException ||
+        error is TlsException) {
+      return true;
+    }
+
+    if (error is HttpException) {
+      final message = error.message.toLowerCase();
+      return message.contains('connection closed') ||
+          message.contains('timed out') ||
+          message.contains('connection reset');
+    }
+
+    return false;
+  }
+
+  static String _formatStorage(int sizeMB) {
+    if (sizeMB >= 1024) {
+      return '${(sizeMB / 1024).toStringAsFixed(1)} GB';
+    }
+    return '$sizeMB MB';
   }
 
   /// Delete a downloaded model.
   static Future<void> delete(AyaModel model) async {
-    final path = await modelPath(model);
-    final file = File(path);
-    if (await file.exists()) {
-      await file.delete();
+    final finalFile = File(await modelPath(model));
+    final partialFile = File(await _partialModelPath(model));
+
+    if (await finalFile.exists()) {
+      await finalFile.delete();
+    }
+    if (await partialFile.exists()) {
+      await partialFile.delete();
     }
   }
 }

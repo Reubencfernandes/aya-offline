@@ -7,6 +7,7 @@ class AyaModel {
   final String quant;
   final String fileName;
   final String downloadUrl;
+
   /// Approximate file size in MB.
   final int sizeMB;
 
@@ -32,8 +33,9 @@ const ayaModels = [
     description: '70+ languages worldwide',
     quant: 'q4_k_m',
     fileName: 'tiny-aya-global-q4_k_m.gguf',
-    downloadUrl: 'https://huggingface.co/CohereLabs/tiny-aya-global-GGUF/resolve/main/tiny-aya-global-q4_k_m.gguf',
-    sizeMB: 1800,
+    downloadUrl:
+        'https://huggingface.co/CohereLabs/tiny-aya-global-GGUF/resolve/main/tiny-aya-global-q4_k_m.gguf',
+    sizeMB: 2045,
   ),
   AyaModel(
     family: 'global',
@@ -41,8 +43,9 @@ const ayaModels = [
     description: '70+ languages worldwide',
     quant: 'q4_0',
     fileName: 'tiny-aya-global-q4_0.gguf',
-    downloadUrl: 'https://huggingface.co/CohereLabs/tiny-aya-global-GGUF/resolve/main/tiny-aya-global-q4_0.gguf',
-    sizeMB: 1600,
+    downloadUrl:
+        'https://huggingface.co/CohereLabs/tiny-aya-global-GGUF/resolve/main/tiny-aya-global-q4_0.gguf',
+    sizeMB: 1940,
   ),
   AyaModel(
     family: 'global',
@@ -50,8 +53,9 @@ const ayaModels = [
     description: '70+ languages worldwide',
     quant: 'q8_0',
     fileName: 'tiny-aya-global-q8_0.gguf',
-    downloadUrl: 'https://huggingface.co/CohereLabs/tiny-aya-global-GGUF/resolve/main/tiny-aya-global-q8_0.gguf',
-    sizeMB: 3200,
+    downloadUrl:
+        'https://huggingface.co/CohereLabs/tiny-aya-global-GGUF/resolve/main/tiny-aya-global-q8_0.gguf',
+    sizeMB: 3405,
   ),
 
   // Earth — European & related languages
@@ -61,8 +65,9 @@ const ayaModels = [
     description: 'European & related languages',
     quant: 'q4_k_m',
     fileName: 'tiny-aya-earth-q4_k_m.gguf',
-    downloadUrl: 'https://huggingface.co/CohereLabs/tiny-aya-earth-GGUF/resolve/main/tiny-aya-earth-q4_k_m.gguf',
-    sizeMB: 1800,
+    downloadUrl:
+        'https://huggingface.co/CohereLabs/tiny-aya-earth-GGUF/resolve/main/tiny-aya-earth-q4_k_m.gguf',
+    sizeMB: 2045,
   ),
   AyaModel(
     family: 'earth',
@@ -70,8 +75,9 @@ const ayaModels = [
     description: 'European & related languages',
     quant: 'q4_0',
     fileName: 'tiny-aya-earth-q4_0.gguf',
-    downloadUrl: 'https://huggingface.co/CohereLabs/tiny-aya-earth-GGUF/resolve/main/tiny-aya-earth-q4_0.gguf',
-    sizeMB: 1600,
+    downloadUrl:
+        'https://huggingface.co/CohereLabs/tiny-aya-earth-GGUF/resolve/main/tiny-aya-earth-q4_0.gguf',
+    sizeMB: 1940,
   ),
   AyaModel(
     family: 'earth',
@@ -79,8 +85,9 @@ const ayaModels = [
     description: 'European & related languages',
     quant: 'q8_0',
     fileName: 'tiny-aya-earth-q8_0.gguf',
-    downloadUrl: 'https://huggingface.co/CohereLabs/tiny-aya-earth-GGUF/resolve/main/tiny-aya-earth-q8_0.gguf',
-    sizeMB: 3200,
+    downloadUrl:
+        'https://huggingface.co/CohereLabs/tiny-aya-earth-GGUF/resolve/main/tiny-aya-earth-q8_0.gguf',
+    sizeMB: 3405,
   ),
 
   // Fire — South & Southeast Asian languages
@@ -90,8 +97,9 @@ const ayaModels = [
     description: 'South & Southeast Asian languages',
     quant: 'q4_k_m',
     fileName: 'tiny-aya-fire-q4_k_m.gguf',
-    downloadUrl: 'https://huggingface.co/CohereLabs/tiny-aya-fire-GGUF/resolve/main/tiny-aya-fire-q4_k_m.gguf',
-    sizeMB: 1800,
+    downloadUrl:
+        'https://huggingface.co/CohereLabs/tiny-aya-fire-GGUF/resolve/main/tiny-aya-fire-q4_k_m.gguf',
+    sizeMB: 2045,
   ),
   AyaModel(
     family: 'fire',
@@ -99,8 +107,9 @@ const ayaModels = [
     description: 'South & Southeast Asian languages',
     quant: 'q4_0',
     fileName: 'tiny-aya-fire-q4_0.gguf',
-    downloadUrl: 'https://huggingface.co/CohereLabs/tiny-aya-fire-GGUF/resolve/main/tiny-aya-fire-q4_0.gguf',
-    sizeMB: 1600,
+    downloadUrl:
+        'https://huggingface.co/CohereLabs/tiny-aya-fire-GGUF/resolve/main/tiny-aya-fire-q4_0.gguf',
+    sizeMB: 1940,
   ),
   AyaModel(
     family: 'fire',
@@ -108,8 +117,9 @@ const ayaModels = [
     description: 'South & Southeast Asian languages',
     quant: 'q8_0',
     fileName: 'tiny-aya-fire-q8_0.gguf',
-    downloadUrl: 'https://huggingface.co/CohereLabs/tiny-aya-fire-GGUF/resolve/main/tiny-aya-fire-q8_0.gguf',
-    sizeMB: 3200,
+    downloadUrl:
+        'https://huggingface.co/CohereLabs/tiny-aya-fire-GGUF/resolve/main/tiny-aya-fire-q8_0.gguf',
+    sizeMB: 3405,
   ),
 
   // Water — East Asian, African & Middle Eastern languages
@@ -119,8 +129,9 @@ const ayaModels = [
     description: 'East Asian, African & Middle Eastern languages',
     quant: 'q4_k_m',
     fileName: 'tiny-aya-water-q4_k_m.gguf',
-    downloadUrl: 'https://huggingface.co/CohereLabs/tiny-aya-water-GGUF/resolve/main/tiny-aya-water-q4_k_m.gguf',
-    sizeMB: 1800,
+    downloadUrl:
+        'https://huggingface.co/CohereLabs/tiny-aya-water-GGUF/resolve/main/tiny-aya-water-q4_k_m.gguf',
+    sizeMB: 2045,
   ),
   AyaModel(
     family: 'water',
@@ -128,8 +139,9 @@ const ayaModels = [
     description: 'East Asian, African & Middle Eastern languages',
     quant: 'q4_0',
     fileName: 'tiny-aya-water-q4_0.gguf',
-    downloadUrl: 'https://huggingface.co/CohereLabs/tiny-aya-water-GGUF/resolve/main/tiny-aya-water-q4_0.gguf',
-    sizeMB: 1600,
+    downloadUrl:
+        'https://huggingface.co/CohereLabs/tiny-aya-water-GGUF/resolve/main/tiny-aya-water-q4_0.gguf',
+    sizeMB: 1940,
   ),
   AyaModel(
     family: 'water',
@@ -137,8 +149,9 @@ const ayaModels = [
     description: 'East Asian, African & Middle Eastern languages',
     quant: 'q8_0',
     fileName: 'tiny-aya-water-q8_0.gguf',
-    downloadUrl: 'https://huggingface.co/CohereLabs/tiny-aya-water-GGUF/resolve/main/tiny-aya-water-q8_0.gguf',
-    sizeMB: 3200,
+    downloadUrl:
+        'https://huggingface.co/CohereLabs/tiny-aya-water-GGUF/resolve/main/tiny-aya-water-q8_0.gguf',
+    sizeMB: 3405,
   ),
 ];
 

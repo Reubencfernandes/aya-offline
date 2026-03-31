@@ -1,118 +1,112 @@
 import 'package:flutter/material.dart';
 
+import '../app/model_download_controller.dart';
 import 'model_info.dart';
 import 'model_manager.dart';
 
 /// Screen for browsing, downloading, and selecting Aya model variants.
 class ModelPickerScreen extends StatefulWidget {
-  const ModelPickerScreen({super.key});
+  final ModelDownloadController downloadController;
+
+  const ModelPickerScreen({super.key, required this.downloadController});
 
   @override
   State<ModelPickerScreen> createState() => _ModelPickerScreenState();
 }
 
 class _ModelPickerScreenState extends State<ModelPickerScreen> {
-  final _downloaded = <String>{};
-  String? _downloading;
-  double _progress = 0;
-  String _progressText = '';
-
   @override
   void initState() {
     super.initState();
-    _loadDownloaded();
-  }
-
-  Future<void> _loadDownloaded() async {
-    final files = await ModelManager.downloadedFiles();
-    setState(() => _downloaded.addAll(files));
+    widget.downloadController.initialize();
   }
 
   Future<void> _download(AyaModel model) async {
-    setState(() {
-      _downloading = model.fileName;
-      _progress = 0;
-      _progressText = 'Starting download...';
-    });
-
     try {
-      final path = await ModelManager.download(
-        model,
-        onProgress: (received, total) {
-          final mb = (received / 1024 / 1024).toStringAsFixed(0);
-          final totalMB =
-              total > 0 ? (total / 1024 / 1024).toStringAsFixed(0) : '?';
-          setState(() {
-            _progress = total > 0 ? received / total : 0;
-            _progressText = '$mb / $totalMB MB';
-          });
-        },
-      );
-
-      setState(() {
-        _downloaded.add(model.fileName);
-        _downloading = null;
-      });
-
-      if (mounted) _selectModel(model, path);
-    } catch (e) {
-      setState(() {
-        _downloading = null;
-        _progressText = '';
-      });
+      final path = await widget.downloadController.download(model);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Download failed: $e')),
-        );
+        _selectModel(model, path);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Download failed: $e')));
       }
     }
   }
 
   Future<void> _selectModel(AyaModel model, [String? path]) async {
-    path ??= await ModelManager.modelPath(model);
+    path ??= await modelPath(model);
     if (mounted) {
       Navigator.of(context).pop(path);
     }
   }
 
   Future<void> _deleteModel(AyaModel model) async {
-    await ModelManager.delete(model);
-    setState(() => _downloaded.remove(model.fileName));
+    await widget.downloadController.deleteModel(model);
   }
+
+  Future<String> modelPath(AyaModel model) => ModelManager.modelPath(model);
 
   @override
   Widget build(BuildContext context) {
     final families = modelsByFamily;
     final familyOrder = ['global', 'earth', 'fire', 'water'];
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Select Model'),
-        centerTitle: true,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text(
-            'Choose a model variant and quantization.\n'
-            'q4_k_m is recommended for most devices.',
-            style: TextStyle(color: Colors.grey[600], fontSize: 14),
-          ),
-          const SizedBox(height: 16),
-          for (final family in familyOrder)
-            if (families.containsKey(family))
-              _FamilyCard(
-                models: families[family]!,
-                downloaded: _downloaded,
-                downloading: _downloading,
-                progress: _progress,
-                progressText: _progressText,
-                onDownload: _download,
-                onSelect: _selectModel,
-                onDelete: _deleteModel,
+    return AnimatedBuilder(
+      animation: widget.downloadController,
+      builder: (context, _) {
+        return Scaffold(
+          appBar: AppBar(title: const Text('Select Model'), centerTitle: true),
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Text(
+                'Choose a model variant and quantization.\n'
+                'The smaller options need roughly 1.9-2.0 GB free, and q8_0 needs about 3.4 GB.\n'
+                'Keep the app open while downloading. Background downloads are not supported yet.',
+                style: TextStyle(color: Colors.grey[600], fontSize: 14),
               ),
-        ],
-      ),
+              if (widget.downloadController.isDownloading) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.downloading_rounded),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Download keeps running if you leave this screen, but keep the app open until it finishes.',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              for (final family in familyOrder)
+                if (families.containsKey(family))
+                  _FamilyCard(
+                    models: families[family]!,
+                    downloaded: widget.downloadController.downloaded,
+                    downloading: widget.downloadController.downloadingFileName,
+                    progress: widget.downloadController.progress,
+                    progressText: widget.downloadController.progressText,
+                    onDownload: _download,
+                    onSelect: _selectModel,
+                    onDelete: _deleteModel,
+                  ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -148,11 +142,15 @@ class _FamilyCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(first.displayName,
-                style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              first.displayName,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 4),
-            Text(first.description,
-                style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+            Text(
+              first.description,
+              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+            ),
             const SizedBox(height: 12),
             for (final model in models) _buildQuantRow(context, model),
           ],
@@ -171,12 +169,15 @@ class _FamilyCard extends StatelessWidget {
         children: [
           SizedBox(
             width: 64,
-            child: Text(model.quant,
-                style:
-                    const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+            child: Text(
+              model.quant,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            ),
           ),
-          Text('~${model.sizeMB} MB',
-              style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+          Text(
+            '~${model.sizeMB} MB',
+            style: TextStyle(color: Colors.grey[500], fontSize: 12),
+          ),
           if (model.quant == 'q4_k_m') ...[
             const SizedBox(width: 8),
             Container(
@@ -185,11 +186,13 @@ class _FamilyCard extends StatelessWidget {
                 color: Theme.of(context).colorScheme.primaryContainer,
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: Text('recommended',
-                  style: TextStyle(
-                      fontSize: 10,
-                      color:
-                          Theme.of(context).colorScheme.onPrimaryContainer)),
+              child: Text(
+                'recommended',
+                style: TextStyle(
+                  fontSize: 10,
+                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                ),
+              ),
             ),
           ],
           const Spacer(),
@@ -197,11 +200,14 @@ class _FamilyCard extends StatelessWidget {
             Expanded(
               child: Column(
                 children: [
-                  LinearProgressIndicator(value: progress > 0 ? progress : null),
+                  LinearProgressIndicator(
+                    value: progress > 0 ? progress : null,
+                  ),
                   const SizedBox(height: 2),
-                  Text(progressText,
-                      style:
-                          TextStyle(fontSize: 10, color: Colors.grey[500])),
+                  Text(
+                    progressText,
+                    style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+                  ),
                 ],
               ),
             )

@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Aya uses the microphone so you can dictate text for translation.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Aya uses speech recognition to turn your voice into text for translation.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
