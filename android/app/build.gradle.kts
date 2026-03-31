@@ -24,20 +24,13 @@ android {
         applicationId = "com.inl.aya_flutter"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
-        }
-    }
-
-    externalNativeBuild {
-        cmake {
-            path = file("../../engine-c/CMakeLists.txt")
-            version = "3.22.1"
         }
     }
 

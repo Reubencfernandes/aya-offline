@@ -1,47 +1,68 @@
-/// Abstract engine interface for the Aya inference engine.
-///
-/// Provides a platform-agnostic API that selects between NativeEngine
-/// (desktop/mobile via dart:ffi) and WasmEngine (web via JS interop).
-library;
+import 'dart:io' show Platform;
 
-import 'dart:async';
-import 'dart:typed_data';
+import 'package:flutter_llama/flutter_llama.dart';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+/// Wraps FlutterLlama with Aya-specific defaults for low-end mobile devices.
+class AyaEngine {
+  final FlutterLlama _llama = FlutterLlama.instance;
+  bool _loaded = false;
 
-// Conditional imports: only one of these will be used at compile time.
-// Web uses SSE (connects to local server), native uses FFI.
-import 'native_engine.dart' if (dart.library.js_interop) 'sse_engine.dart'
-    as platform;
+  bool get isLoaded => _loaded;
 
-/// Abstract interface for the Aya inference engine.
-abstract class Engine {
-  /// Whether the engine has a model loaded and is ready for generation.
-  bool get isLoaded;
+  /// Load a GGUF model from [modelPath] with mobile-optimized defaults.
+  Future<void> load(String modelPath) async {
+    final threads = Platform.numberOfProcessors.clamp(1, 4);
+    final config = LlamaConfig(
+      modelPath: modelPath,
+      nThreads: threads,
+      nGpuLayers: 0,
+      contextSize: 1024,
+      batchSize: 512,
+      useGpu: false,
+      verbose: false,
+    );
+    final success = await _llama.loadModel(config);
+    if (!success) {
+      throw Exception('Failed to load model: $modelPath');
+    }
+    _loaded = true;
+  }
 
-  /// Load a model from a path (native) or URL (web).
-  Future<void> load(String pathOrUrl);
-
-  /// Load a model from raw bytes in memory.
-  /// Used by the web File Picker flow.
-  Future<void> loadFromBytes(Uint8List bytes);
-
-  /// Generate text from a prompt, yielding tokens as they are produced.
+  /// Generate a response for [prompt] using the Cohere/Aya chat template.
+  /// Returns a stream of token strings.
   Stream<String> generate(
     String prompt, {
-    int maxTokens = 256,
+    int maxTokens = 128,
     double temperature = 0.7,
     int topK = 40,
-  });
-
-  /// Release all engine resources.
-  void dispose();
-
-  /// Factory that creates the correct engine for the current platform.
-  factory Engine() {
-    if (kIsWeb) {
-      return platform.createEngine();
+  }) {
+    if (!_loaded) {
+      throw StateError('No model loaded. Call load() first.');
     }
-    return platform.createEngine();
+    final formatted = _applyChatTemplate(prompt);
+    final params = GenerationParams(
+      prompt: formatted,
+      maxTokens: maxTokens,
+      temperature: temperature,
+      topK: topK,
+      stopSequences: ['<|END_OF_TURN_TOKEN|>'],
+    );
+    return _llama.generateStream(params);
+  }
+
+  /// Apply the Cohere/Aya chat template expected by tiny-aya-global.
+  String _applyChatTemplate(String userMessage) {
+    return '<BOS_TOKEN>'
+        '<|START_OF_TURN_TOKEN|><|USER_TOKEN|>'
+        '$userMessage'
+        '<|END_OF_TURN_TOKEN|>'
+        '<|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>';
+  }
+
+  Future<void> dispose() async {
+    if (_loaded) {
+      await _llama.unloadModel();
+      _loaded = false;
+    }
   }
 }

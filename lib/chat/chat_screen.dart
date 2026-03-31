@@ -1,14 +1,5 @@
-import 'dart:io' show Platform;
-import 'dart:typed_data';
-
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 import '../engine/engine.dart';
-
-// Conditional import for web file picker
-import 'file_picker_stub.dart' if (dart.library.js_interop) 'file_picker_web.dart'
-    as picker;
 
 class ChatMessage {
   final String text;
@@ -19,10 +10,13 @@ class ChatMessage {
 }
 
 class ChatScreen extends StatefulWidget {
-  /// Path to the .gguf model file (native) or ignored on web (uses file picker).
+  /// Path to the .gguf model file.
   final String modelPath;
 
-  const ChatScreen({super.key, required this.modelPath});
+  /// Callback to open the model picker (switch models).
+  final VoidCallback? onChangeModel;
+
+  const ChatScreen({super.key, required this.modelPath, this.onChangeModel});
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -32,54 +26,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   final _messages = <ChatMessage>[];
-  late final Engine _engine;
+  late final AyaEngine _engine;
   bool _isGenerating = false;
   bool _loaded = false;
   bool _isLoading = false;
   String _status = '';
-  bool _waitingForPermission = false;
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _engine = Engine();
-    if (kIsWeb) {
-      // Web: connect to local Aya server via SSE
-      _connectToServer();
-    } else {
-      // Native: auto-load from file path
-      _loadModelFromPath();
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // When user returns from Settings after granting permission, retry loading
-    if (state == AppLifecycleState.resumed && _waitingForPermission) {
-      _waitingForPermission = false;
-      _loadModelFromPath();
-    }
-  }
-
-  Future<void> _connectToServer() async {
-    setState(() {
-      _isLoading = true;
-      _status = 'Connecting to server...';
-    });
-    try {
-      await _engine.load('');
-      setState(() {
-        _loaded = true;
-        _isLoading = false;
-        _status = 'Connected';
-      });
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _status = 'Server offline. Start aya_server.exe first.';
-      });
-    }
+    _engine = AyaEngine();
+    _loadModelFromPath();
   }
 
   Future<void> _loadModelFromPath() async {
@@ -88,59 +45,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _status = 'Loading model...';
     });
 
-    // Request storage permission on Android
-    if (!kIsWeb && Platform.isAndroid) {
-      var status = await Permission.manageExternalStorage.status;
-      if (!status.isGranted) {
-        _waitingForPermission = true;
-        status = await Permission.manageExternalStorage.request();
-        if (!status.isGranted) {
-          setState(() {
-            _isLoading = false;
-            _status = 'Grant "All files access", then come back to the app.';
-          });
-          return;
-        }
-        _waitingForPermission = false;
-      }
-    }
-
     try {
       await _engine.load(widget.modelPath);
-      setState(() {
-        _loaded = true;
-        _isLoading = false;
-        _status = 'Ready';
-      });
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _status = 'Failed: $e';
-      });
-    }
-  }
-
-  Future<void> _pickAndLoadModel() async {
-    setState(() {
-      _isLoading = true;
-      _status = 'Select a .gguf model file...';
-    });
-
-    try {
-      final Uint8List? bytes = await picker.pickFileBytes();
-      if (bytes == null) {
-        setState(() {
-          _isLoading = false;
-          _status = '';
-        });
-        return;
-      }
-
-      setState(() => _status = 'Loading model (${(bytes.length / 1024 / 1024 / 1024).toStringAsFixed(1)} GB)...');
-
-      await _engine.loadFromBytes(bytes);
-      // Give the event loop a moment to breathe after heavy WASM work.
-      await Future.delayed(const Duration(milliseconds: 100));
       setState(() {
         _loaded = true;
         _isLoading = false;
@@ -215,6 +121,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               size: 12,
             ),
           ),
+          if (widget.onChangeModel != null)
+            IconButton(
+              icon: const Icon(Icons.swap_horiz),
+              tooltip: 'Change model',
+              onPressed: widget.onChangeModel,
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {
@@ -252,20 +164,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           Padding(
                             padding: const EdgeInsets.only(top: 8),
                             child: Text(
-                              kIsWeb ? 'Connected to local server (SSE)' : 'Running offline',
+                              'Running offline',
                               style: TextStyle(color: Colors.grey[400], fontSize: 12),
                             ),
                           ),
-                        if (!_loaded && !_isLoading && kIsWeb)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 16),
-                            child: FilledButton.icon(
-                              onPressed: _connectToServer,
-                              icon: const Icon(Icons.refresh),
-                              label: const Text('Retry connection'),
-                            ),
-                          ),
-                        if (!_loaded && !_isLoading && !kIsWeb)
+                        if (!_loaded && !_isLoading)
                           Text(
                             _status.isEmpty ? 'Waiting...' : _status,
                             style: TextStyle(color: Colors.grey[500], fontSize: 16),
