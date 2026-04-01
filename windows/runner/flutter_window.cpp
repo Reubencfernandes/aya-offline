@@ -1,8 +1,54 @@
 #include "flutter_window.h"
 
+#include <filesystem>
 #include <optional>
 
+#include <flutter/standard_method_codec.h>
+
 #include "flutter/generated_plugin_registrant.h"
+
+namespace {
+
+std::filesystem::path ResolveExistingPath(const std::filesystem::path& path) {
+  auto current = path;
+  while (!current.empty() && !std::filesystem::exists(current)) {
+    const auto parent = current.parent_path();
+    if (parent == current) {
+      break;
+    }
+    current = parent;
+  }
+
+  if (!current.empty() && std::filesystem::exists(current)) {
+    return current;
+  }
+
+  return std::filesystem::current_path();
+}
+
+std::wstring Utf16FromUtf8(const std::string& utf8_string) {
+  if (utf8_string.empty()) {
+    return std::wstring();
+  }
+
+  const int target_length = ::MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, utf8_string.c_str(), -1, nullptr, 0);
+  if (target_length == 0) {
+    return std::wstring();
+  }
+
+  std::wstring utf16_string(target_length - 1, L'\0');
+  const int converted_length = ::MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, utf8_string.c_str(), -1,
+      utf16_string.data(), target_length);
+  if (converted_length == 0) {
+    return std::wstring();
+  }
+
+  return utf16_string;
+}
+
+}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -25,6 +71,7 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  RegisterStorageInfoChannel();
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -39,10 +86,58 @@ bool FlutterWindow::OnCreate() {
   return true;
 }
 
+void FlutterWindow::RegisterStorageInfoChannel() {
+  storage_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "aya/storage_info",
+          &flutter::StandardMethodCodec::GetInstance());
+
+  storage_channel_->SetMethodCallHandler(
+      [](const flutter::MethodCall<flutter::EncodableValue>& call,
+         std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+             result) {
+        if (call.method_name() != "getAvailableBytes") {
+          result->NotImplemented();
+          return;
+        }
+
+        const auto* arguments = std::get_if<flutter::EncodableMap>(call.arguments());
+        if (arguments == nullptr) {
+          result->Error("invalid_args", "Missing path argument.");
+          return;
+        }
+
+        const auto path_it = arguments->find(flutter::EncodableValue("path"));
+        if (path_it == arguments->end()) {
+          result->Error("invalid_args", "Missing path argument.");
+          return;
+        }
+
+        const auto* utf8_path = std::get_if<std::string>(&path_it->second);
+        if (utf8_path == nullptr || utf8_path->empty()) {
+          result->Error("invalid_args", "Missing path argument.");
+          return;
+        }
+
+        const auto resolved_path = ResolveExistingPath(Utf16FromUtf8(*utf8_path));
+
+        ULARGE_INTEGER available_bytes;
+        if (!::GetDiskFreeSpaceExW(resolved_path.c_str(), &available_bytes,
+                                   nullptr, nullptr)) {
+          result->Error("storage_error", "Unable to read available disk space.");
+          return;
+        }
+
+        result->Success(flutter::EncodableValue(
+            static_cast<int64_t>(available_bytes.QuadPart)));
+      });
+}
+
 void FlutterWindow::OnDestroy() {
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
+  storage_channel_ = nullptr;
 
   Win32Window::OnDestroy();
 }

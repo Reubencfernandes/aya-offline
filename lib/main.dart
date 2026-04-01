@@ -44,7 +44,14 @@ class AyaApp extends StatelessWidget {
 }
 
 class AyaHomeShell extends StatefulWidget {
-  const AyaHomeShell({super.key});
+  const AyaHomeShell({
+    super.key,
+    this.sessionController,
+    this.downloadController,
+  });
+
+  final AyaSessionController? sessionController;
+  final ModelDownloadController? downloadController;
 
   @override
   State<AyaHomeShell> createState() => _AyaHomeShellState();
@@ -53,6 +60,8 @@ class AyaHomeShell extends StatefulWidget {
 class _AyaHomeShellState extends State<AyaHomeShell> {
   late final AyaSessionController _session;
   late final ModelDownloadController _downloads;
+  late final bool _ownsSession;
+  late final bool _ownsDownloads;
   int _selectedIndex = 0;
   int _lastHandledDownloadVersion = 0;
   bool _isSettingsOpen = false;
@@ -60,8 +69,12 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
   @override
   void initState() {
     super.initState();
-    _session = AyaSessionController()..initialize();
-    _downloads = ModelDownloadController()..initialize();
+    _ownsSession = widget.sessionController == null;
+    _ownsDownloads = widget.downloadController == null;
+    _session = widget.sessionController ?? AyaSessionController();
+    _downloads = widget.downloadController ?? ModelDownloadController();
+    _session.initialize();
+    _downloads.initialize();
     _downloads.addListener(_handleDownloadStateChanged);
   }
 
@@ -146,8 +159,7 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
           ),
           body: Column(
             children: [
-              if (_downloads.isDownloading)
-                _DownloadBanner(downloads: _downloads),
+              if (_downloads.isBusy) _DownloadBanner(downloads: _downloads),
               if (_downloads.lastErrorMessage != null)
                 _DownloadErrorBanner(
                   message: _downloads.lastErrorMessage!,
@@ -210,8 +222,12 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
   @override
   void dispose() {
     _downloads.removeListener(_handleDownloadStateChanged);
-    _downloads.dispose();
-    _session.dispose();
+    if (_ownsDownloads) {
+      _downloads.dispose();
+    }
+    if (_ownsSession) {
+      _session.dispose();
+    }
     super.dispose();
   }
 }
@@ -223,6 +239,13 @@ class _DownloadBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final title = downloads.isFinalizing
+        ? 'Finalizing ${downloads.downloadLabel}'
+        : 'Downloading ${downloads.downloadLabel}';
+    final subtitle = downloads.isFinalizing
+        ? 'The file is on device. Finishing storage writes and activating the model.'
+        : 'Keep the app open while downloading. Background downloads are not supported yet.';
+
     return Material(
       color: Theme.of(context).colorScheme.surfaceContainerHigh,
       child: Padding(
@@ -236,7 +259,7 @@ class _DownloadBanner extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Downloading ${downloads.downloadLabel}',
+                    title,
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                 ),
@@ -251,10 +274,7 @@ class _DownloadBanner extends StatelessWidget {
               value: downloads.progress > 0 ? downloads.progress : null,
             ),
             const SizedBox(height: 8),
-            Text(
-              'Keep the app open while downloading. Background downloads are not supported yet.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
           ],
         ),
       ),

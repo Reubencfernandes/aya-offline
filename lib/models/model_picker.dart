@@ -65,10 +65,10 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
               Text(
                 'Choose a model variant and quantization.\n'
                 'The smaller options need roughly 1.9-2.0 GB free, and q8_0 needs about 3.4 GB.\n'
-                'Keep the app open while downloading. Background downloads are not supported yet.',
+                'Keep the app open while downloading and finalizing. Background downloads are not supported yet.',
                 style: TextStyle(color: Colors.grey[600], fontSize: 14),
               ),
-              if (widget.downloadController.isDownloading) ...[
+              if (widget.downloadController.isBusy) ...[
                 const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.all(14),
@@ -82,7 +82,9 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          'Download keeps running if you leave this screen, but keep the app open until it finishes.',
+                          widget.downloadController.isFinalizing
+                              ? 'The file is downloaded. Keep the app open while the model is finalized and activated.'
+                              : 'Download keeps running if you leave this screen, but keep the app open until it finishes.',
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
                       ),
@@ -94,11 +96,8 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
               for (final family in familyOrder)
                 if (families.containsKey(family))
                   _FamilyCard(
+                    controller: widget.downloadController,
                     models: families[family]!,
-                    downloaded: widget.downloadController.downloaded,
-                    downloading: widget.downloadController.downloadingFileName,
-                    progress: widget.downloadController.progress,
-                    progressText: widget.downloadController.progressText,
                     onDownload: _download,
                     onSelect: _selectModel,
                     onDelete: _deleteModel,
@@ -112,21 +111,15 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
 }
 
 class _FamilyCard extends StatelessWidget {
+  final ModelDownloadController controller;
   final List<AyaModel> models;
-  final Set<String> downloaded;
-  final String? downloading;
-  final double progress;
-  final String progressText;
   final void Function(AyaModel) onDownload;
   final void Function(AyaModel) onSelect;
   final void Function(AyaModel) onDelete;
 
   const _FamilyCard({
+    required this.controller,
     required this.models,
-    required this.downloaded,
-    required this.downloading,
-    required this.progress,
-    required this.progressText,
     required this.onDownload,
     required this.onSelect,
     required this.onDelete,
@@ -160,12 +153,19 @@ class _FamilyCard extends StatelessWidget {
   }
 
   Widget _buildQuantRow(BuildContext context, AyaModel model) {
-    final isDownloaded = downloaded.contains(model.fileName);
-    final isDownloading = downloading == model.fileName;
+    final isDownloaded = controller.downloaded.contains(model.fileName);
+    final isActiveDownload = controller.downloadingFileName == model.fileName;
+    final readiness = controller.readinessFor(model);
+    final hasInsufficientSpace =
+        !isDownloaded &&
+        !isActiveDownload &&
+        readiness != null &&
+        !readiness.canProceed;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
             width: 64,
@@ -196,16 +196,21 @@ class _FamilyCard extends StatelessWidget {
             ),
           ],
           const Spacer(),
-          if (isDownloading)
+          if (isActiveDownload)
             Expanded(
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   LinearProgressIndicator(
-                    value: progress > 0 ? progress : null,
+                    value: controller.isFinalizing
+                        ? 1
+                        : controller.progress > 0
+                        ? controller.progress
+                        : null,
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    progressText,
+                    controller.progressText,
                     style: TextStyle(fontSize: 10, color: Colors.grey[500]),
                   ),
                 ],
@@ -222,10 +227,35 @@ class _FamilyCard extends StatelessWidget {
               child: const Text('Use'),
             ),
           ] else
-            OutlinedButton.icon(
-              onPressed: downloading != null ? null : () => onDownload(model),
-              icon: const Icon(Icons.download, size: 18),
-              label: const Text('Download'),
+            SizedBox(
+              width: 170,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed:
+                        controller.downloadingFileName != null ||
+                            hasInsufficientSpace
+                        ? null
+                        : () => onDownload(model),
+                    icon: Icon(
+                      hasInsufficientSpace ? Icons.storage : Icons.download,
+                      size: 18,
+                    ),
+                    label: Text(
+                      hasInsufficientSpace ? 'Not enough storage' : 'Download',
+                    ),
+                  ),
+                  if (hasInsufficientSpace) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Need ${readiness.requiredFreeLabel}, have ${readiness.availableFreeLabel}.',
+                      style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+                      textAlign: TextAlign.right,
+                    ),
+                  ],
+                ],
+              ),
             ),
         ],
       ),
