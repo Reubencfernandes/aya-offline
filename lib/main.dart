@@ -108,15 +108,8 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
     unawaited(_session.selectModelPath(completedPath));
   }
 
-  String _titleForIndex(int index) {
-    switch (index) {
-      case 0:
-        return 'Translate';
-      case 1:
-        return 'Chat';
-      default:
-        return 'Aya';
-    }
+  void _switchToTab(int index) {
+    setState(() => _selectedIndex = index);
   }
 
   @override
@@ -125,38 +118,6 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
       animation: Listenable.merge([_session, _downloads]),
       builder: (context, _) {
         return Scaffold(
-          appBar: AppBar(
-            backgroundColor: Colors.transparent,
-            surfaceTintColor: Colors.transparent,
-            titleSpacing: 20,
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _titleForIndex(_selectedIndex),
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                Text(
-                  _session.currentModelLabel,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withAlpha(170),
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              _StatusPill(session: _session),
-              const SizedBox(width: 8),
-              IconButton(
-                tooltip: 'Model settings',
-                onPressed: _openModelSettings,
-                icon: const Icon(Icons.settings_outlined),
-              ),
-              const SizedBox(width: 8),
-            ],
-          ),
           body: Column(
             children: [
               if (_downloads.isBusy) _DownloadBanner(downloads: _downloads),
@@ -166,53 +127,25 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
                   onDismiss: _downloads.clearLastError,
                 ),
               Expanded(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Theme.of(context).colorScheme.surface,
-                        Theme.of(context).colorScheme.surfaceContainerLowest,
-                      ],
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
+                child: IndexedStack(
+                  index: _selectedIndex,
+                  children: [
+                    TranslateScreen(
+                      key: ValueKey('translate-${_session.modelPath}'),
+                      controller: _session,
+                      onOpenSettings: _openModelSettings,
+                      onSwitchToChat: () => _switchToTab(1),
                     ),
-                  ),
-                  child: IndexedStack(
-                    index: _selectedIndex,
-                    children: [
-                      TranslateScreen(
-                        key: ValueKey('translate-${_session.modelPath}'),
-                        controller: _session,
-                        onOpenSettings: _openModelSettings,
-                      ),
-                      ChatScreen(
-                        key: ValueKey('chat-${_session.modelPath}'),
-                        controller: _session,
-                        onOpenSettings: _openModelSettings,
-                      ),
-                    ],
-                  ),
+                    ChatScreen(
+                      key: ValueKey('chat-${_session.modelPath}'),
+                      controller: _session,
+                      onOpenSettings: _openModelSettings,
+                      onSwitchToTranslate: () => _switchToTab(0),
+                    ),
+                  ],
                 ),
               ),
             ],
-          ),
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _selectedIndex,
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.translate_outlined),
-                selectedIcon: Icon(Icons.translate),
-                label: 'Translate',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.chat_bubble_outline),
-                selectedIcon: Icon(Icons.chat_bubble),
-                label: 'Chat',
-              ),
-            ],
-            onDestinationSelected: (index) {
-              setState(() => _selectedIndex = index);
-            },
           ),
         );
       },
@@ -323,39 +256,3 @@ class _DownloadErrorBanner extends StatelessWidget {
   }
 }
 
-class _StatusPill extends StatelessWidget {
-  final AyaSessionController session;
-
-  const _StatusPill({required this.session});
-
-  @override
-  Widget build(BuildContext context) {
-    final (label, color) = switch ((
-      session.isChecking,
-      session.isModelLoading,
-      session.isReady,
-      session.hasModel,
-    )) {
-      (true, _, _, _) => ('Checking', Colors.orange),
-      (_, true, _, _) => ('Loading', Colors.orange),
-      (_, _, true, _) => ('Ready', Colors.green),
-      (_, _, _, true) => ('Error', Colors.redAccent),
-      _ => ('No model', Colors.grey),
-    };
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.circle, size: 10, color: color),
-          const SizedBox(width: 6),
-          Text(label, style: Theme.of(context).textTheme.labelMedium),
-        ],
-      ),
-    );
-  }
-}

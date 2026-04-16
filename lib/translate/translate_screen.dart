@@ -10,11 +10,13 @@ import 'language_option.dart';
 class TranslateScreen extends StatefulWidget {
   final AyaSessionController controller;
   final VoidCallback onOpenSettings;
+  final VoidCallback onSwitchToChat;
 
   const TranslateScreen({
     super.key,
     required this.controller,
     required this.onOpenSettings,
+    required this.onSwitchToChat,
   });
 
   @override
@@ -179,7 +181,11 @@ class _TranslateScreenState extends State<TranslateScreen> {
   }
 
   String _cleanModelOutput(String value) {
-    return value.replaceAll('<|END_OF_TURN_TOKEN|>', '').trim();
+    return value
+        .replaceAll('<|END_OF_TURN_TOKEN|>', '')
+        .replaceAll('<|START_RESPONSE|>', '')
+        .replaceAll('<|END_RESPONSE|>', '')
+        .trim();
   }
 
   Future<void> _speakTranslation() async {
@@ -228,10 +234,70 @@ class _TranslateScreenState extends State<TranslateScreen> {
       );
     }
 
-    return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-        children: [
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Top navbar matching ChatScreen
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.menu, color: Colors.black54),
+                    onPressed: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Sidebar opened')),
+                      );
+                    },
+                  ),
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: widget.onSwitchToChat,
+                        child: Text(
+                          'Ask',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          'Translate',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.settings, color: Colors.black54),
+                        tooltip: 'Settings',
+                        onPressed: widget.onOpenSettings,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                children: [
           Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
@@ -406,7 +472,11 @@ class _TranslateScreenState extends State<TranslateScreen> {
               ],
             ),
           ),
-        ],
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

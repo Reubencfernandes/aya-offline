@@ -7,6 +7,17 @@ import 'package:path_provider/path_provider.dart';
 import 'model_info.dart';
 import 'storage_space_service.dart';
 
+/// Returns the best base directory for storing large model files.
+/// On Android, prefers external app storage (more space, no permissions needed).
+/// Falls back to the standard app documents directory on iOS and other platforms.
+Future<Directory> _bestStorageDir() async {
+  if (Platform.isAndroid) {
+    final extDir = await getExternalStorageDirectory();
+    if (extDir != null) return extDir;
+  }
+  return getApplicationDocumentsDirectory();
+}
+
 const int _downloadHeadroomBytes = 256 * 1024 * 1024;
 
 enum ModelDownloadPhase { idle, downloading, finalizing, completed, failed }
@@ -62,14 +73,15 @@ class ModelManager {
   static Future<Directory> Function()? debugModelsDirProvider;
 
   /// Directory where models are stored.
+  /// Uses external storage on Android for more space.
   static Future<Directory> get _modelsDir async {
     final override = debugModelsDirProvider;
     if (override != null) {
       return override();
     }
 
-    final appDir = await getApplicationDocumentsDirectory();
-    final dir = Directory('${appDir.path}/models');
+    final baseDir = await _bestStorageDir();
+    final dir = Directory('${baseDir.path}/models');
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }

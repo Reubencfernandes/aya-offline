@@ -112,35 +112,56 @@ class FlutterLlama {
   }
 
   /// Generate text as a stream (token by token)
-  /// 
+  ///
   /// Returns Stream of strings (individual tokens)
   Stream<String> generateStream(GenerationParams params) async* {
     if (!_isModelLoaded) {
       throw StateError('Model not loaded. Call loadModel() first.');
     }
 
+    if (kDebugMode) {
+      print('[FlutterLlama] Streaming generation with params: $params');
+    }
+
+    final eventChannel = EventChannel('flutter_llama/stream');
+    final controller = StreamController<String>();
+
+    // Subscribe to the event channel FIRST so the native side has an eventSink
+    // before we trigger generation via the method channel.
+    final subscription = eventChannel.receiveBroadcastStream().listen(
+      (token) {
+        if (token is String) controller.add(token);
+      },
+      onError: controller.addError,
+      onDone: () {
+        if (!controller.isClosed) controller.close();
+      },
+    );
+
     try {
-      if (kDebugMode) {
-        print('[FlutterLlama] Streaming generation with params: $params');
-      }
+      // Yield to the event loop so the listen message reaches the native side.
+      await Future<void>.delayed(Duration.zero);
 
-      // Set up event channel for streaming
-      final eventChannel = EventChannel('flutter_llama/stream');
-      
-      // Send generation request
-      await _channel.invokeMethod('generateStream', params.toMap());
+      // Fire the generation request. Don't await — it completes when generation
+      // finishes, but tokens arrive via the event channel while it runs.
+      unawaited(
+        _channel.invokeMethod('generateStream', params.toMap()).catchError((e) {
+          if (!controller.isClosed) {
+            controller.addError(e);
+            controller.close();
+          }
+        }),
+      );
 
-      // Listen to token stream
-      await for (final token in eventChannel.receiveBroadcastStream()) {
-        if (token is String) {
-          yield token;
-        }
-      }
+      yield* controller.stream;
     } catch (e) {
       if (kDebugMode) {
         print('[FlutterLlama] Error in streaming generation: $e');
       }
       rethrow;
+    } finally {
+      await subscription.cancel();
+      if (!controller.isClosed) await controller.close();
     }
   }
 

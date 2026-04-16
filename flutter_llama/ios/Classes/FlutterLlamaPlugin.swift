@@ -385,7 +385,7 @@ func llama_get_model_info(
     _ contextSize: UnsafeMutablePointer<Int32>
 )
 
-@_silgen_name("llama_free_model")
+@_silgen_name("llama_cpp_bridge_free_model")
 func llama_cpp_bridge_free_model()
 
 @_silgen_name("llama_stop_generation")

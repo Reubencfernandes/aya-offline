@@ -52,20 +52,19 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
   @override
   Widget build(BuildContext context) {
     final families = modelsByFamily;
-    final familyOrder = ['global', 'earth', 'fire', 'water'];
+    final familyOrder = ['global', 'water', 'earth', 'fire'];
 
     return AnimatedBuilder(
       animation: widget.downloadController,
       builder: (context, _) {
         return Scaffold(
-          appBar: AppBar(title: const Text('Select Model'), centerTitle: true),
+          backgroundColor: Colors.white,
+          appBar: AppBar(title: const Text('Select your preference'), centerTitle: true, backgroundColor: Colors.white),
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
               Text(
-                'Choose a model variant and quantization.\n'
-                'The smaller options need roughly 1.9-2.0 GB free, and q8_0 needs about 3.4 GB.\n'
-                'Keep the app open while downloading and finalizing. Background downloads are not supported yet.',
+                'Choose a model variant for local inference',
                 style: TextStyle(color: Colors.grey[600], fontSize: 14),
               ),
               if (widget.downloadController.isBusy) ...[
@@ -125,138 +124,134 @@ class _FamilyCard extends StatelessWidget {
     required this.onDelete,
   });
 
-  @override
-  Widget build(BuildContext context) {
-    final first = models.first;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              first.displayName,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              first.description,
-              style: TextStyle(color: Colors.grey[600], fontSize: 13),
-            ),
-            const SizedBox(height: 12),
-            for (final model in models) _buildQuantRow(context, model),
-          ],
-        ),
-      ),
-    );
+  Color _familyThemeColor(String family) {
+    switch (family) {
+      case 'global': return const Color(0xFF5EB381);
+      case 'water': return const Color(0xFF2647B7);
+      case 'earth': return const Color(0xFF284818);
+      case 'fire': return const Color(0xFFD47400);
+      default: return const Color(0xFF5EB381);
+    }
   }
 
-  Widget _buildQuantRow(BuildContext context, AyaModel model) {
+  String _capitalize(String s) => s.isNotEmpty ? '${s[0].toUpperCase()}${s.substring(1)}' : s;
+
+  @override
+  Widget build(BuildContext context) {
+    if (models.isEmpty) return const SizedBox.shrink();
+    
+    // Default to displaying the recommended quantization
+    final model = models.firstWhere((m) => m.quant == 'q4_0', orElse: () => models.first);
+    final themeColor = _familyThemeColor(model.family);
     final isDownloaded = controller.downloaded.contains(model.fileName);
     final isActiveDownload = controller.downloadingFileName == model.fileName;
     final readiness = controller.readinessFor(model);
-    final hasInsufficientSpace =
-        !isDownloaded &&
-        !isActiveDownload &&
-        readiness != null &&
-        !readiness.canProceed;
+    final hasInsufficientSpace = !isDownloaded && !isActiveDownload && readiness != null && !readiness.canProceed;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
+      elevation: 2,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(
-            width: 64,
-            child: Text(
-              model.quant,
-              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-            ),
+          Image.asset(
+            'assets/images/TinyAya_${_capitalize(model.family)}.png',
+            height: 120,
+            fit: BoxFit.cover,
           ),
-          Text(
-            '~${model.sizeMB} MB',
-            style: TextStyle(color: Colors.grey[500], fontSize: 12),
-          ),
-          if (model.quant == 'q4_k_m') ...[
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                'recommended',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: Theme.of(context).colorScheme.onPrimaryContainer,
-                ),
-              ),
-            ),
-          ],
-          const Spacer(),
-          if (isActiveDownload)
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  LinearProgressIndicator(
-                    value: controller.isFinalizing
-                        ? 1
-                        : controller.progress > 0
-                        ? controller.progress
-                        : null,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    controller.progressText,
-                    style: TextStyle(fontSize: 10, color: Colors.grey[500]),
-                  ),
-                ],
-              ),
-            )
-          else if (isDownloaded) ...[
-            IconButton(
-              icon: const Icon(Icons.delete_outline, size: 20),
-              onPressed: () => onDelete(model),
-              tooltip: 'Delete',
-            ),
-            FilledButton.tonal(
-              onPressed: () => onSelect(model),
-              child: const Text('Use'),
-            ),
-          ] else
-            SizedBox(
-              width: 170,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed:
-                        controller.downloadingFileName != null ||
-                            hasInsufficientSpace
-                        ? null
-                        : () => onDownload(model),
-                    icon: Icon(
-                      hasInsufficientSpace ? Icons.storage : Icons.download,
-                      size: 18,
-                    ),
-                    label: Text(
-                      hasInsufficientSpace ? 'Not enough storage' : 'Download',
-                    ),
-                  ),
-                  if (hasInsufficientSpace) ...[
-                    const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
                     Text(
-                      'Need ${readiness.requiredFreeLabel}, have ${readiness.availableFreeLabel}.',
-                      style: TextStyle(fontSize: 10, color: Colors.grey[500]),
-                      textAlign: TextAlign.right,
+                      model.displayName,
+                      style: TextStyle(
+                        color: themeColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    Text(
+                      '${(model.sizeMB / 1024).toStringAsFixed(2)} GB',
+                      style: TextStyle(
+                        color: themeColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
                     ),
                   ],
-                ],
-              ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  model.description,
+                  style: TextStyle(color: Colors.grey[800], fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                if (isActiveDownload)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: LinearProgressIndicator(
+                          value: controller.isFinalizing ? 1 : (controller.progress > 0 ? controller.progress : null),
+                          color: themeColor,
+                          backgroundColor: Colors.grey[200],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(Icons.close, size: 20, color: Colors.grey),
+                    ],
+                  )
+                else if (isDownloaded)
+                  Row(
+                    children: [
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: themeColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        onPressed: () => onSelect(model),
+                        child: const Text('Use Model'),
+                      ),
+                      const Spacer(),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red[50],
+                          foregroundColor: Colors.red,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        onPressed: () => onDelete(model),
+                        icon: const Icon(Icons.delete, size: 18),
+                        label: const Text('Delete'),
+                      ),
+                    ],
+                  )
+                else
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: themeColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: hasInsufficientSpace ? null : () => onDownload(model),
+                      icon: Icon(hasInsufficientSpace ? Icons.storage : Icons.download, size: 18),
+                      label: Text(hasInsufficientSpace ? 'Not enough storage' : 'Download'),
+                    ),
+                  )
+              ],
             ),
+          ),
         ],
       ),
     );

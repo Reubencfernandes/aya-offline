@@ -20,14 +20,15 @@ class AyaEngine {
 
   /// Load a GGUF model from [modelPath] with mobile-optimized defaults.
   Future<void> load(String modelPath) async {
-    final threads = Platform.numberOfProcessors.clamp(1, 4);
+    // Use most cores but leave 2 free for the UI thread and OS.
+    final threads = (Platform.numberOfProcessors - 2).clamp(2, 6);
     final config = LlamaConfig(
       modelPath: modelPath,
       nThreads: threads,
-      nGpuLayers: 0,
+      nGpuLayers: 99, // offload as many layers as the GPU can handle
       contextSize: 1024,
       batchSize: 512,
-      useGpu: false,
+      useGpu: true,
       verbose: false,
     );
     final success = await _llama.loadModel(config);

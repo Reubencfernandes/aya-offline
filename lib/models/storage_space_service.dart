@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -9,8 +11,14 @@ class StorageSpaceService {
   static Future<int?> Function(String path)? debugAvailableBytesProvider;
 
   static Future<int?> availableBytesForModelsDir() async {
-    final appDir = await getApplicationDocumentsDirectory();
-    return availableBytesForPath('${appDir.path}/models');
+    Directory baseDir;
+    if (Platform.isAndroid) {
+      baseDir = await getExternalStorageDirectory() ??
+          await getApplicationDocumentsDirectory();
+    } else {
+      baseDir = await getApplicationDocumentsDirectory();
+    }
+    return availableBytesForPath('${baseDir.path}/models');
   }
 
   static Future<int?> availableBytesForPath(String path) async {

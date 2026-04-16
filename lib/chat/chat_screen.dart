@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../app/aya_session_controller.dart';
 import '../engine/engine.dart';
@@ -18,11 +21,13 @@ class ChatMessage {
 class ChatScreen extends StatefulWidget {
   final AyaSessionController controller;
   final VoidCallback onOpenSettings;
+  final VoidCallback onSwitchToTranslate;
 
   const ChatScreen({
     super.key,
     required this.controller,
     required this.onOpenSettings,
+    required this.onSwitchToTranslate,
   });
 
   @override
@@ -34,6 +39,28 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scrollController = ScrollController();
   final _messages = <ChatMessage>[];
   bool _isGenerating = false;
+
+  Color get _themeColor {
+    final family = widget.controller.selectedModel?.family ?? 'global';
+    switch (family) {
+      case 'global': return const Color(0xFF5EB381);
+      case 'water': return const Color(0xFF2647B7);
+      case 'earth': return const Color(0xFF284818);
+      case 'fire': return const Color(0xFFD47400);
+      default: return const Color(0xFF5EB381);
+    }
+  }
+
+  List<Color> get _gradientColors {
+    final family = widget.controller.selectedModel?.family ?? 'global';
+    switch (family) {
+      case 'global': return [const Color(0xFF3898C8), const Color(0xFF4FC35C)];
+      case 'water': return [const Color(0xFF41A9E1), const Color(0xFF2647B7)];
+      case 'earth': return [const Color(0xFF8BCA84), const Color(0xFF284818)];
+      case 'fire': return [const Color(0xFFFFB75E), const Color(0xFFD47400)];
+      default: return [const Color(0xFF3898C8), const Color(0xFF4FC35C)];
+    }
+  }
 
   Future<void> _sendMessage() async {
     final text = _controller.text.trim();
@@ -92,7 +119,11 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   String _cleanModelOutput(String value) {
-    return value.replaceAll('<|END_OF_TURN_TOKEN|>', '').trim();
+    return value
+        .replaceAll('<|END_OF_TURN_TOKEN|>', '')
+        .replaceAll('<|START_RESPONSE|>', '')
+        .replaceAll('<|END_RESPONSE|>', '')
+        .trim();
   }
 
   void _scrollToBottom() {
@@ -120,131 +151,177 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
-    return SafeArea(
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _ModeBanner(
-                    icon: Icons.auto_awesome,
-                    title: 'Offline chat',
-                    subtitle:
-                        'Ask questions, brainstorm, or draft replies locally.',
-                  ),
-                ),
-                const SizedBox(width: 12),
-                FilledButton.tonalIcon(
-                  onPressed: _messages.isEmpty
-                      ? null
-                      : () => setState(() => _messages.clear()),
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Clear'),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: _messages.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.chat_bubble_outline,
-                            size: 68,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Start a conversation',
-                            style: Theme.of(context).textTheme.headlineSmall,
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Aya is loaded on-device. Your messages stay local.',
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withAlpha(180),
-                                ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, index) {
-                      return _MessageBubble(message: _messages[index]);
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Custom Top Navbar
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.menu, color: Colors.black54),
+                    onPressed: () {
+                      // Sidebar placeholder
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Sidebar opened')),
+                      );
                     },
                   ),
-          ),
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              border: Border(
-                top: BorderSide(
-                  color: Theme.of(context).colorScheme.outlineVariant,
-                ),
-              ),
-            ),
-            child: SafeArea(
-              top: false,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      minLines: 1,
-                      maxLines: 5,
-                      textInputAction: TextInputAction.send,
-                      decoration: InputDecoration(
-                        hintText: 'Ask Aya anything…',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(22),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(16),
                         ),
-                        filled: true,
-                        fillColor: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerLow,
+                        child: Text(
+                          'Ask',
+                          style: GoogleFonts.inter(
+                            color: _themeColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
-                      enabled: !_isGenerating,
-                      onSubmitted: (_) => _sendMessage(),
-                    ),
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: widget.onSwitchToTranslate,
+                        child: Text(
+                          'Translate',
+                          style: GoogleFonts.inter(
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 10),
-                  FilledButton(
-                    onPressed: _isGenerating ? null : _sendMessage,
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(56, 56),
-                      shape: const CircleBorder(),
-                      padding: EdgeInsets.zero,
-                    ),
-                    child: _isGenerating
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2.2),
-                          )
-                        : const Icon(Icons.send_rounded),
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.add, color: Colors.black54),
+                        tooltip: 'New Chat',
+                        onPressed: () => setState(() => _messages.clear()),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.settings, color: Colors.black54),
+                        tooltip: 'Settings',
+                        onPressed: widget.onOpenSettings,
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
-          ),
-        ],
+            
+            Expanded(
+              child: _messages.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ShaderMask(
+                            shaderCallback: (bounds) => LinearGradient(
+                              colors: _gradientColors,
+                            ).createShader(bounds),
+                            child: Text(
+                              'Welcome back, Reuben',
+                              style: GoogleFonts.inter(
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'How can I help you today?',
+                            style: GoogleFonts.inter(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.grey.shade800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
+                        return _MessageBubble(
+                          message: _messages[index],
+                          themeColor: _themeColor,
+                        );
+                      },
+                    ),
+            ),
+            
+            // Input Area
+            Container(
+              margin: const EdgeInsets.all(16),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black12,
+                    blurRadius: 10,
+                    offset: Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: _controller,
+                    minLines: 1,
+                    maxLines: 5,
+                    style: GoogleFonts.inter(),
+                    decoration: InputDecoration.collapsed(
+                      hintText: 'How can Tiny Aya help you today ?',
+                      hintStyle: GoogleFonts.inter(color: Colors.grey),
+                    ),
+                    enabled: !_isGenerating,
+                    onSubmitted: (_) => _sendMessage(),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const SizedBox.shrink(),
+                      CircleAvatar(
+                        backgroundColor: _themeColor.withAlpha(_isGenerating ? 128 : 255),
+                        radius: 16,
+                        child: IconButton(
+                          padding: EdgeInsets.zero,
+                          icon: _isGenerating
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.arrow_upward, size: 16, color: Colors.white),
+                          onPressed: _isGenerating ? null : _sendMessage,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -254,63 +331,6 @@ class _ChatScreenState extends State<ChatScreen> {
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
-  }
-}
-
-class _ModeBanner extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  const _ModeBanner({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(
-              icon,
-              color: Theme.of(context).colorScheme.onPrimaryContainer,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withAlpha(180),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
 
@@ -329,47 +349,52 @@ class _ModelRequiredState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Container(
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Center(
+          child: Padding(
             padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(28),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.memory_outlined,
-                  size: 64,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.headlineSmall,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  subtitle,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withAlpha(180),
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.memory_outlined,
+                    size: 64,
+                    color: Colors.blueAccent,
                   ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 20),
-                FilledButton.icon(
-                  onPressed: onPressed,
-                  icon: const Icon(Icons.settings_outlined),
-                  label: Text(actionLabel),
-                ),
-              ],
+                  const SizedBox(height: 16),
+                  Text(
+                    title,
+                    style: GoogleFonts.inter(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    subtitle,
+                    style: GoogleFonts.inter(
+                      color: Colors.grey.shade700,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: onPressed,
+                    icon: const Icon(Icons.settings_outlined),
+                    label: Text(actionLabel),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -380,45 +405,111 @@ class _ModelRequiredState extends StatelessWidget {
 
 class _MessageBubble extends StatelessWidget {
   final ChatMessage message;
+  final Color themeColor;
 
-  const _MessageBubble({required this.message});
+  const _MessageBubble({
+    required this.message,
+    required this.themeColor,
+  });
 
   @override
   Widget build(BuildContext context) {
     final isUser = message.isUser;
-    final alignment = isUser ? Alignment.centerRight : Alignment.centerLeft;
-    final bubbleColor = isUser
-        ? Theme.of(context).colorScheme.primary
-        : Theme.of(context).colorScheme.surfaceContainerHigh;
-    final textColor = isUser
-        ? Theme.of(context).colorScheme.onPrimary
-        : Theme.of(context).colorScheme.onSurface;
+    final alignment = isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+    final bubbleColor = isUser ? themeColor : Colors.transparent;
+    final textColor = isUser ? Colors.white : Colors.black87;
 
-    return Align(
-      alignment: alignment,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.82,
-        ),
-        decoration: BoxDecoration(
-          color: bubbleColor,
-          borderRadius: BorderRadius.circular(22),
-        ),
-        child: message.isLoading
-            ? SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: textColor,
-                ),
-              )
-            : Text(
-                message.text,
-                style: TextStyle(color: textColor, height: 1.35),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: alignment,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.85,
+            ),
+            decoration: BoxDecoration(
+              color: bubbleColor,
+              borderRadius: isUser
+                  ? const BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      bottomLeft: Radius.circular(16),
+                      bottomRight: Radius.circular(16),
+                      topRight: Radius.circular(4),
+                    )
+                  : BorderRadius.circular(8),
+            ),
+            child: message.isLoading
+                ? const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.grey,
+                    ),
+                  )
+                : isUser
+                    ? Text(
+                        message.text,
+                        style: GoogleFonts.inter(
+                          color: textColor,
+                          height: 1.4,
+                          fontSize: 15,
+                        ),
+                      )
+                    : MarkdownBody(
+                        data: message.text,
+                        styleSheet: MarkdownStyleSheet(
+                          p: GoogleFonts.inter(
+                            color: textColor,
+                            height: 1.4,
+                            fontSize: 15,
+                          ),
+                          strong: GoogleFonts.inter(
+                            color: textColor,
+                            height: 1.4,
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          listBullet: GoogleFonts.inter(
+                            color: textColor,
+                            fontSize: 15,
+                          ),
+                          code: GoogleFonts.inter(
+                            color: textColor,
+                            fontSize: 13,
+                            backgroundColor: Colors.grey.shade200,
+                          ),
+                          blockSpacing: 8,
+                        ),
+                      ),
+          ),
+          if (!isUser && !message.isLoading)
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0, left: 8.0, right: 8.0),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  InkWell(
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: message.text));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Copied to clipboard')),
+                      );
+                    },
+                    child: const Icon(Icons.copy, size: 20, color: Colors.grey),
+                  ),
+                  const SizedBox(width: 16),
+                  InkWell(
+                    onTap: () {},
+                    child: const Icon(Icons.refresh, size: 20, color: Colors.grey),
+                  ),
+                ],
               ),
+            ),
+        ],
       ),
     );
   }
