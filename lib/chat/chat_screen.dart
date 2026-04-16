@@ -62,6 +62,13 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  String get _greeting {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  }
+
   Future<void> _sendMessage() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _isGenerating || !widget.controller.isReady) {
@@ -229,7 +236,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               colors: _gradientColors,
                             ).createShader(bounds),
                             child: Text(
-                              'Welcome back, Reuben',
+                              _greeting,
                               style: GoogleFonts.inter(
                                 fontSize: 28,
                                 fontWeight: FontWeight.bold,

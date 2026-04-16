@@ -66,6 +66,8 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
   int _lastHandledDownloadVersion = 0;
   bool _isSettingsOpen = false;
 
+  bool _didAutoOpenSettings = false;
+
   @override
   void initState() {
     super.initState();
@@ -76,6 +78,16 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
     _session.initialize();
     _downloads.initialize();
     _downloads.addListener(_handleDownloadStateChanged);
+    _session.addListener(_handleSessionStateChanged);
+  }
+
+  void _handleSessionStateChanged() {
+    if (!_session.isChecking && !_session.isReady && !_downloads.isBusy && !_didAutoOpenSettings && !_isSettingsOpen && mounted) {
+      _didAutoOpenSettings = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _openModelSettings();
+      });
+    }
   }
 
   Future<void> _openModelSettings() async {
@@ -117,10 +129,18 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
     return AnimatedBuilder(
       animation: Listenable.merge([_session, _downloads]),
       builder: (context, _) {
+        if (_downloads.isBusy) {
+          return Scaffold(
+            backgroundColor: Colors.white,
+            body: Center(
+              child: _FullScreenDownload(downloads: _downloads),
+            ),
+          );
+        }
+
         return Scaffold(
           body: Column(
             children: [
-              if (_downloads.isBusy) _DownloadBanner(downloads: _downloads),
               if (_downloads.lastErrorMessage != null)
                 _DownloadErrorBanner(
                   message: _downloads.lastErrorMessage!,
@@ -155,6 +175,7 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
   @override
   void dispose() {
     _downloads.removeListener(_handleDownloadStateChanged);
+    _session.removeListener(_handleSessionStateChanged);
     if (_ownsDownloads) {
       _downloads.dispose();
     }
@@ -165,51 +186,76 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
   }
 }
 
-class _DownloadBanner extends StatelessWidget {
+class _FullScreenDownload extends StatelessWidget {
   final ModelDownloadController downloads;
 
-  const _DownloadBanner({required this.downloads});
+  const _FullScreenDownload({required this.downloads});
+
+  Color _themeColor(String family) {
+    switch (family) {
+      case 'global': return const Color(0xFF5EB381);
+      case 'water': return const Color(0xFF2647B7);
+      case 'earth': return const Color(0xFF284818);
+      case 'fire': return const Color(0xFFD47400);
+      default: return const Color(0xFF5EB381);
+    }
+  }
+
+  List<Color> _gradientColors(String family) {
+    switch (family) {
+      case 'global': return [const Color(0xFF3898C8), const Color(0xFF4FC35C)];
+      case 'water': return [const Color(0xFF41A9E1), const Color(0xFF2647B7)];
+      case 'earth': return [const Color(0xFF8BCA84), const Color(0xFF284818)];
+      case 'fire': return [const Color(0xFFFFB75E), const Color(0xFFD47400)];
+      default: return [const Color(0xFF3898C8), const Color(0xFF4FC35C)];
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final title = downloads.isFinalizing
-        ? 'Finalizing ${downloads.downloadLabel}'
-        : 'Downloading ${downloads.downloadLabel}';
-    final subtitle = downloads.isFinalizing
-        ? 'The file is on device. Finishing storage writes and activating the model.'
-        : 'Keep the app open while downloading. Background downloads are not supported yet.';
-
-    return Material(
-      color: Theme.of(context).colorScheme.surfaceContainerHigh,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.downloading_rounded),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleSmall,
+    final family = downloads.downloadingModel?.family ?? 'global';
+    final modelName = downloads.downloadingModel?.displayName.split(' ').last ?? 'Global';
+    
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 48.0),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          LinearProgressIndicator(
+            value: downloads.isFinalizing ? null : (downloads.progress > 0 ? downloads.progress : null),
+            color: _themeColor(family),
+            backgroundColor: Colors.grey.shade200,
+            minHeight: 8,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text(
+                'Loading Tiny Aya ',
+                style: TextStyle(
+                  color: Colors.black87,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              ShaderMask(
+                shaderCallback: (bounds) => LinearGradient(
+                  colors: _gradientColors(family),
+                ).createShader(bounds),
+                child: Text(
+                  modelName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                Text(
-                  downloads.progressText,
-                  style: Theme.of(context).textTheme.labelMedium,
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            LinearProgressIndicator(
-              value: downloads.progress > 0 ? downloads.progress : null,
-            ),
-            const SizedBox(height: 8),
-            Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-          ],
-        ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
