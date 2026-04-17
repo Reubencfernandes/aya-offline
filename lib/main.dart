@@ -206,7 +206,7 @@ class _FullScreenDownload extends StatelessWidget {
       case 'global': return [const Color(0xFF3898C8), const Color(0xFF4FC35C)];
       case 'water': return [const Color(0xFF41A9E1), const Color(0xFF2647B7)];
       case 'earth': return [const Color(0xFF8BCA84), const Color(0xFF284818)];
-      case 'fire': return [const Color(0xFFFFB75E), const Color(0xFFD47400)];
+      case 'fire': return [const Color(0xFFE94322), const Color(0xFFE58D1C)];
       default: return [const Color(0xFF3898C8), const Color(0xFF4FC35C)];
     }
   }
@@ -221,12 +221,31 @@ class _FullScreenDownload extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          LinearProgressIndicator(
-            value: downloads.isFinalizing ? null : (downloads.progress > 0 ? downloads.progress : null),
-            color: _themeColor(family),
-            backgroundColor: Colors.grey.shade200,
-            minHeight: 8,
-            borderRadius: BorderRadius.circular(4),
+          Container(
+            height: 12,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(color: Colors.grey.shade200, width: 1),
+            ),
+            child: downloads.isFinalizing || downloads.progress <= 0
+                ? LinearProgressIndicator(
+                    backgroundColor: Colors.transparent,
+                    valueColor: AlwaysStoppedAnimation(_themeColor(family)),
+                  )
+                : FractionallySizedBox(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: downloads.progress,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: _gradientColors(family),
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                        ),
+                      ),
+                    ),
+                  ),
           ),
           const SizedBox(height: 16),
           Row(
