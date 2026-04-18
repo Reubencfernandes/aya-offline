@@ -6,7 +6,32 @@
       "Bash(git -C flutter_llama log --oneline -5 -- llama.cpp)",
       "Bash(git check-ignore *)",
       "Bash(git ls-tree *)",
-      "Bash(git submodule *)"
+      "Bash(git submodule *)",
+      "Bash(flutter analyze *)",
+      "Bash(curl -sI -L --max-redirs 5 \"https://huggingface.co/CohereLabs/tiny-aya-global-GGUF/resolve/main/tiny-aya-global-q4_k_m.gguf\")",
+      "Bash(flutter test *)",
+      "Bash(flutter pub *)",
+      "Bash(flutter devices *)",
+      "Bash(system_profiler SPUSBDataType)",
+      "Bash(xcrun devicectl *)",
+      "Bash(idevice_id -l)",
+      "Bash(ioreg -p IOUSB -w0)",
+      "Bash(xcrun xctrace *)",
+      "Bash(flutter doctor *)",
+      "Bash(lipo -info flutter_llama/ios/ios_libs/libllama.a)",
+      "Bash(flutter run *)",
+      "Bash(pkill -f \"flutter run\")",
+      "Bash(pod install *)",
+      "Bash(pkill -x Xcode)",
+      "Bash(flutter clean *)",
+      "Bash(xcrun --find devicectl)",
+      "Bash(flutter logs *)",
+      "Bash(pkill -f \"flutter logs\")",
+      "Bash(flutter install *)",
+      "Bash(flutter --version)",
+      "Bash(pkill -f \"flutter install\")",
+      "Bash(git diff *)",
+      "Bash(git add *)"
     ]
   }
 }

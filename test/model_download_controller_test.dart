@@ -39,13 +39,22 @@ void main() {
         downloadedFilesLoader: () async => [],
         readinessChecker: (_) async => _readyCheck,
         deleteModel: (_) async {},
-        downloadModel: (model, {onProgress, onStatus, onPhaseChanged}) async {
-          onPhaseChanged?.call(ModelDownloadPhase.downloading);
-          onProgress?.call(5 * 1024 * 1024, 10 * 1024 * 1024);
-          onPhaseChanged?.call(ModelDownloadPhase.finalizing);
-          onStatus?.call('Finalizing model...');
-          return '/tmp/${model.fileName}';
-        },
+        downloadModel:
+            (
+              model, {
+              onProgress,
+              onStatus,
+              onPhaseChanged,
+              onRetry,
+              pauseToken,
+              cancelToken,
+            }) async {
+              onPhaseChanged?.call(ModelDownloadPhase.downloading);
+              onProgress?.call(5 * 1024 * 1024, 10 * 1024 * 1024);
+              onPhaseChanged?.call(ModelDownloadPhase.finalizing);
+              onStatus?.call('Finalizing model...');
+              return '/tmp/${model.fileName}';
+            },
       );
 
       final phases = <ModelDownloadPhase>[];
@@ -73,14 +82,23 @@ void main() {
         readinessChecker: (_) async =>
             shouldReportOutOfSpace ? _outOfSpaceCheck : _readyCheck,
         deleteModel: (_) async {},
-        downloadModel: (model, {onProgress, onStatus, onPhaseChanged}) async {
-          onPhaseChanged?.call(ModelDownloadPhase.downloading);
-          shouldReportOutOfSpace = true;
-          throw InsufficientStorageException(
-            model: model,
-            check: _outOfSpaceCheck,
-          );
-        },
+        downloadModel:
+            (
+              model, {
+              onProgress,
+              onStatus,
+              onPhaseChanged,
+              onRetry,
+              pauseToken,
+              cancelToken,
+            }) async {
+              onPhaseChanged?.call(ModelDownloadPhase.downloading);
+              shouldReportOutOfSpace = true;
+              throw InsufficientStorageException(
+                model: model,
+                check: _outOfSpaceCheck,
+              );
+            },
       );
 
       final phases = <ModelDownloadPhase>[];

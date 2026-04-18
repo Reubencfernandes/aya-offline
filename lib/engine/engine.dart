@@ -2,7 +2,7 @@ import 'dart:io' show Platform;
 
 import 'package:flutter_llama/flutter_llama.dart';
 
-enum AyaMessageRole { user, assistant }
+enum AyaMessageRole { system, user, assistant }
 
 class AyaConversationTurn {
   final AyaMessageRole role;
@@ -63,16 +63,22 @@ class AyaEngine {
     required String sourceLanguage,
     required String targetLanguage,
   }) {
-    final prompt =
-        'You are a precise translation assistant.\n'
-        'Translate the user text from $sourceLanguage to $targetLanguage.\n'
-        'Preserve meaning, names, tone, and formatting when possible.\n'
-        'Return only the translated text without explanations.\n\n'
-        'Text:\n$text';
+    const systemPrompt =
+        'You are a professional translator. You translate text faithfully from '
+        'one language to another. Respond with only the translated text. Do not '
+        'add quotes, labels, language names, explanations, apologies, or the '
+        'original text. Preserve punctuation, numbers, and proper nouns.';
+
+    final userPrompt =
+        'Translate the following text from $sourceLanguage to $targetLanguage.\n\n'
+        '$text';
 
     return _generateFromTurns(
-      [AyaConversationTurn(role: AyaMessageRole.user, text: prompt)],
-      maxTokens: 200,
+      [
+        AyaConversationTurn(role: AyaMessageRole.system, text: systemPrompt),
+        AyaConversationTurn(role: AyaMessageRole.user, text: userPrompt),
+      ],
+      maxTokens: 512,
       temperature: 0.2,
       topP: 0.9,
       topK: 20,
@@ -108,6 +114,7 @@ class AyaEngine {
 
     for (final turn in turns) {
       final roleToken = switch (turn.role) {
+        AyaMessageRole.system => '<|SYSTEM_TOKEN|>',
         AyaMessageRole.user => '<|USER_TOKEN|>',
         AyaMessageRole.assistant => '<|CHATBOT_TOKEN|>',
       };

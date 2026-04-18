@@ -69,13 +69,22 @@ void main() {
       downloadedFilesLoader: () async => [],
       readinessChecker: (_) async => _readyCheck,
       deleteModel: (_) async {},
-      downloadModel: (model, {onProgress, onStatus, onPhaseChanged}) async {
-        onPhaseChanged?.call(ModelDownloadPhase.downloading);
-        throw InsufficientStorageException(
-          model: model,
-          check: _outOfSpaceCheck,
-        );
-      },
+      downloadModel:
+          (
+            model, {
+            onProgress,
+            onStatus,
+            onPhaseChanged,
+            onRetry,
+            pauseToken,
+            cancelToken,
+          }) async {
+            onPhaseChanged?.call(ModelDownloadPhase.downloading);
+            throw InsufficientStorageException(
+              model: model,
+              check: _outOfSpaceCheck,
+            );
+          },
     );
 
     await expectLater(
@@ -93,7 +102,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('No model'), findsOneWidget);
+    expect(find.text('Download failed'), findsOneWidget);
     expect(
       find.textContaining('Not enough storage for Aya Test q4_k_m'),
       findsOneWidget,

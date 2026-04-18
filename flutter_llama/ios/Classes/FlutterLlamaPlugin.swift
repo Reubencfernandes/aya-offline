@@ -106,18 +106,20 @@ public class FlutterLlamaPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             }
             
             self.modelPath = modelPath
-            
+
             // Initialize model through llama.cpp C++ bridge
-            let success = llama_init_model(
-                modelPath,
-                Int32(nThreads),
-                Int32(nGpuLayers),
-                Int32(contextSize),
-                Int32(batchSize),
-                useGpu,
-                verbose
-            )
-            
+            let success = modelPath.withCString { cPath -> Bool in
+                return llama_init_model(
+                    cPath,
+                    Int32(nThreads),
+                    Int32(nGpuLayers),
+                    Int32(contextSize),
+                    Int32(batchSize),
+                    useGpu,
+                    verbose
+                )
+            }
+
             self.modelLoaded = success
             
             DispatchQueue.main.async {
@@ -174,18 +176,20 @@ public class FlutterLlamaPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             // Generate through llama.cpp C++ bridge
             var outputBuffer = [CChar](repeating: 0, count: 16384)
             var tokensGenerated: Int32 = 0
-            
-            let success = llama_generate(
-                prompt,
-                Float(temperature),
-                Float(topP),
-                Int32(topK),
-                Int32(maxTokens),
-                Float(repeatPenalty),
-                &outputBuffer,
-                Int32(outputBuffer.count),
-                &tokensGenerated
-            )
+
+            let success = prompt.withCString { cPrompt -> Bool in
+                return llama_generate(
+                    cPrompt,
+                    Float(temperature),
+                    Float(topP),
+                    Int32(topK),
+                    Int32(maxTokens),
+                    Float(repeatPenalty),
+                    &outputBuffer,
+                    Int32(outputBuffer.count),
+                    &tokensGenerated
+                )
+            }
             
             let generationTime = Int(Date().timeIntervalSince(startTime) * 1000)
             
@@ -252,16 +256,18 @@ public class FlutterLlamaPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             let repeatPenalty = (args["repeatPenalty"] as? Double) ?? 1.1
             
             self.shouldStop = false
-            
+
             // Initialize streaming generation
-            llama_generate_stream_init(
-                prompt,
-                Float(temperature),
-                Float(topP),
-                Int32(topK),
-                Int32(maxTokens),
-                Float(repeatPenalty)
-            )
+            prompt.withCString { cPrompt in
+                llama_generate_stream_init(
+                    cPrompt,
+                    Float(temperature),
+                    Float(topP),
+                    Int32(topK),
+                    Int32(maxTokens),
+                    Float(repeatPenalty)
+                )
+            }
             
             // Stream tokens one by one
             var tokenBuffer = [CChar](repeating: 0, count: 256)
@@ -337,7 +343,7 @@ public class FlutterLlamaPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 // These functions will be implemented in llama_cpp_bridge.cpp
 @_silgen_name("llama_init_model")
 func llama_init_model(
-    _ modelPath: String,
+    _ modelPath: UnsafePointer<CChar>,
     _ nThreads: Int32,
     _ nGpuLayers: Int32,
     _ contextSize: Int32,
@@ -348,7 +354,7 @@ func llama_init_model(
 
 @_silgen_name("llama_generate")
 func llama_generate(
-    _ prompt: String,
+    _ prompt: UnsafePointer<CChar>,
     _ temperature: Float,
     _ topP: Float,
     _ topK: Int32,
@@ -361,7 +367,7 @@ func llama_generate(
 
 @_silgen_name("llama_generate_stream_init")
 func llama_generate_stream_init(
-    _ prompt: String,
+    _ prompt: UnsafePointer<CChar>,
     _ temperature: Float,
     _ topP: Float,
     _ topK: Int32,

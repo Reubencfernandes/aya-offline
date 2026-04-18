@@ -1,7 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 
 import '../app/aya_session_controller.dart';
 import '../engine/engine.dart';
@@ -39,6 +41,54 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scrollController = ScrollController();
   final _messages = <ChatMessage>[];
   bool _isGenerating = false;
+  StreamSubscription<String>? _chatSub;
+  final FlutterTts _tts = FlutterTts();
+  Timer? _generationTimer;
+  int _generationSeconds = 0;
+  int? _speakingIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeTts();
+  }
+
+  Future<void> _initializeTts() async {
+    await _tts.awaitSpeakCompletion(true);
+    await _tts.setSpeechRate(0.45);
+    await _tts.setPitch(1.0);
+  }
+
+  String _formatElapsed(int seconds) {
+    if (seconds < 60) return '${seconds}s';
+    final m = seconds ~/ 60;
+    final s = seconds % 60;
+    return '${m}m ${s}s';
+  }
+
+  Future<void> _toggleSpeak(int index, String text) async {
+    if (text.trim().isEmpty) return;
+
+    if (_speakingIndex == index) {
+      await _tts.stop();
+      if (!mounted) return;
+      setState(() => _speakingIndex = null);
+      return;
+    }
+
+    await _tts.stop();
+    if (!mounted) return;
+    setState(() => _speakingIndex = index);
+    try {
+      await _tts.speak(text);
+    } catch (_) {
+      // Swallowed — TTS errors are non-fatal; we just reset the icon.
+    }
+    if (!mounted) return;
+    setState(() {
+      if (_speakingIndex == index) _speakingIndex = null;
+    });
+  }
 
   Color get _themeColor {
     final family = widget.controller.selectedModel?.family ?? 'global';
@@ -88,22 +138,27 @@ class _ChatScreenState extends State<ChatScreen> {
         .toList();
 
     _controller.clear();
+    _generationTimer?.cancel();
     setState(() {
       _messages.add(ChatMessage(text: text, isUser: true));
       _messages.add(
         const ChatMessage(text: '', isUser: false, isLoading: true),
       );
       _isGenerating = true;
+      _generationSeconds = 0;
+    });
+    _generationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() => _generationSeconds++);
     });
     _scrollToBottom();
 
-    try {
-      var fullResponse = '';
-      await for (final token in widget.controller.generateChatReply(
-        history,
-        text,
-      )) {
+    final completer = Completer<void>();
+    var fullResponse = '';
+    _chatSub = widget.controller.generateChatReply(history, text).listen(
+      (token) {
         fullResponse += token;
+        if (!mounted) return;
         setState(() {
           _messages[_messages.length - 1] = ChatMessage(
             text: _cleanModelOutput(fullResponse),
@@ -111,17 +166,36 @@ class _ChatScreenState extends State<ChatScreen> {
           );
         });
         _scrollToBottom();
-      }
+      },
+      onError: (Object error) {
+        if (!completer.isCompleted) completer.completeError(error);
+      },
+      onDone: () {
+        if (!completer.isCompleted) completer.complete();
+      },
+      cancelOnError: true,
+    );
+
+    try {
+      await completer.future;
     } catch (error) {
-      setState(() {
-        _messages[_messages.length - 1] = ChatMessage(
-          text: 'Error: $error',
-          isUser: false,
-        );
-      });
+      if (mounted) {
+        setState(() {
+          _messages[_messages.length - 1] = ChatMessage(
+            text: 'Error: $error',
+            isUser: false,
+          );
+        });
+      }
     } finally {
-      setState(() => _isGenerating = false);
-      _scrollToBottom();
+      await _chatSub?.cancel();
+      _chatSub = null;
+      _generationTimer?.cancel();
+      _generationTimer = null;
+      if (mounted) {
+        setState(() => _isGenerating = false);
+        _scrollToBottom();
+      }
     }
   }
 
@@ -169,15 +243,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  IconButton(
-                    icon: const Icon(Icons.menu, color: Colors.black54),
-                    onPressed: () {
-                      // Sidebar placeholder
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Sidebar opened')),
-                      );
-                    },
-                  ),
+                  const SizedBox(width: 48),
                   Row(
                     children: [
                       Container(
@@ -188,7 +254,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         child: Text(
                           'Ask',
-                          style: GoogleFonts.inter(
+                          style: TextStyle(
                             color: _themeColor,
                             fontWeight: FontWeight.w600,
                           ),
@@ -199,7 +265,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         onPressed: widget.onSwitchToTranslate,
                         child: Text(
                           'Translate',
-                          style: GoogleFonts.inter(
+                          style: TextStyle(
                             color: Colors.grey.shade600,
                             fontWeight: FontWeight.w500,
                           ),
@@ -237,7 +303,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             ).createShader(bounds),
                             child: Text(
                               _greeting,
-                              style: GoogleFonts.inter(
+                              style: TextStyle(
                                 fontSize: 28,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.white,
@@ -247,7 +313,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           const SizedBox(height: 8),
                           Text(
                             'How can I help you today?',
-                            style: GoogleFonts.inter(
+                            style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w700,
                               color: Colors.grey.shade800,
@@ -261,9 +327,19 @@ class _ChatScreenState extends State<ChatScreen> {
                       padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
                       itemCount: _messages.length,
                       itemBuilder: (context, index) {
+                        final isStreamingBubble =
+                            _isGenerating && index == _messages.length - 1;
                         return _MessageBubble(
                           message: _messages[index],
                           themeColor: _themeColor,
+                          elapsedLabel: isStreamingBubble
+                              ? _formatElapsed(_generationSeconds)
+                              : null,
+                          isSpeaking: _speakingIndex == index,
+                          onSpeak: () => _toggleSpeak(
+                            index,
+                            _messages[index].text,
+                          ),
                         );
                       },
                     ),
@@ -291,10 +367,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     controller: _controller,
                     minLines: 1,
                     maxLines: 5,
-                    style: GoogleFonts.inter(),
-                    decoration: InputDecoration.collapsed(
+                    decoration: const InputDecoration.collapsed(
                       hintText: 'How can Tiny Aya help you today ?',
-                      hintStyle: GoogleFonts.inter(color: Colors.grey),
+                      hintStyle: TextStyle(color: Colors.grey),
                     ),
                     enabled: !_isGenerating,
                     onSubmitted: (_) => _sendMessage(),
@@ -335,6 +410,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _chatSub?.cancel();
+    _chatSub = null;
+    _generationTimer?.cancel();
+    _generationTimer = null;
+    unawaited(_tts.stop());
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -380,7 +460,7 @@ class _ModelRequiredState extends StatelessWidget {
                   const SizedBox(height: 16),
                   Text(
                     title,
-                    style: GoogleFonts.inter(
+                    style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
                     ),
@@ -389,7 +469,7 @@ class _ModelRequiredState extends StatelessWidget {
                   const SizedBox(height: 10),
                   Text(
                     subtitle,
-                    style: GoogleFonts.inter(
+                    style: TextStyle(
                       color: Colors.grey.shade700,
                     ),
                     textAlign: TextAlign.center,
@@ -413,11 +493,90 @@ class _ModelRequiredState extends StatelessWidget {
 class _MessageBubble extends StatelessWidget {
   final ChatMessage message;
   final Color themeColor;
+  final String? elapsedLabel;
+  final bool isSpeaking;
+  final VoidCallback? onSpeak;
 
   const _MessageBubble({
     required this.message,
     required this.themeColor,
+    this.elapsedLabel,
+    this.isSpeaking = false,
+    this.onSpeak,
   });
+
+  Widget _loadingContent() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: Colors.grey,
+          ),
+        ),
+        if (elapsedLabel != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Generating… $elapsedLabel',
+            style: TextStyle(
+              color: Colors.grey.shade600,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _assistantContent(Color textColor) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        MarkdownBody(
+          data: message.text,
+          styleSheet: MarkdownStyleSheet(
+            p: TextStyle(
+              color: textColor,
+              height: 1.4,
+              fontSize: 15,
+            ),
+            strong: TextStyle(
+              color: textColor,
+              height: 1.4,
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+            ),
+            listBullet: TextStyle(
+              color: textColor,
+              fontSize: 15,
+            ),
+            code: TextStyle(
+              color: textColor,
+              fontSize: 13,
+              backgroundColor: Colors.grey.shade200,
+            ),
+            blockSpacing: 8,
+          ),
+        ),
+        if (elapsedLabel != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '· $elapsedLabel',
+              style: TextStyle(
+                color: Colors.grey.shade500,
+                fontSize: 11,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -448,57 +607,35 @@ class _MessageBubble extends StatelessWidget {
                   : BorderRadius.circular(8),
             ),
             child: message.isLoading
-                ? const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.grey,
-                    ),
-                  )
+                ? _loadingContent()
                 : isUser
                     ? Text(
                         message.text,
-                        style: GoogleFonts.inter(
+                        style: TextStyle(
                           color: textColor,
                           height: 1.4,
                           fontSize: 15,
                         ),
                       )
-                    : MarkdownBody(
-                        data: message.text,
-                        styleSheet: MarkdownStyleSheet(
-                          p: GoogleFonts.inter(
-                            color: textColor,
-                            height: 1.4,
-                            fontSize: 15,
-                          ),
-                          strong: GoogleFonts.inter(
-                            color: textColor,
-                            height: 1.4,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          listBullet: GoogleFonts.inter(
-                            color: textColor,
-                            fontSize: 15,
-                          ),
-                          code: GoogleFonts.inter(
-                            color: textColor,
-                            fontSize: 13,
-                            backgroundColor: Colors.grey.shade200,
-                          ),
-                          blockSpacing: 8,
-                        ),
-                      ),
+                    : _assistantContent(textColor),
           ),
-          if (!isUser && !message.isLoading)
+          if (!isUser && !message.isLoading && message.text.trim().isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 8.0, left: 8.0, right: 8.0),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
+                  if (onSpeak != null)
+                    InkWell(
+                      onTap: onSpeak,
+                      child: Icon(
+                        isSpeaking ? Icons.stop_circle : Icons.volume_up_outlined,
+                        size: 20,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  if (onSpeak != null) const SizedBox(width: 12),
                   InkWell(
                     onTap: () {
                       Clipboard.setData(ClipboardData(text: message.text));
@@ -507,11 +644,6 @@ class _MessageBubble extends StatelessWidget {
                       );
                     },
                     child: const Icon(Icons.copy, size: 20, color: Colors.grey),
-                  ),
-                  const SizedBox(width: 16),
-                  InkWell(
-                    onTap: () {},
-                    child: const Icon(Icons.refresh, size: 20, color: Colors.grey),
                   ),
                 ],
               ),

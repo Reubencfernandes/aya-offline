@@ -194,18 +194,9 @@ class _FamilyCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 if (isActiveDownload)
-                  Row(
-                    children: [
-                      Expanded(
-                        child: LinearProgressIndicator(
-                          value: controller.isFinalizing ? 1 : (controller.progress > 0 ? controller.progress : null),
-                          color: themeColor,
-                          backgroundColor: Colors.grey[200],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Icon(Icons.close, size: 20, color: Colors.grey),
-                    ],
+                  _InlineDownloadStatus(
+                    controller: controller,
+                    themeColor: themeColor,
                   )
                 else if (isDownloaded)
                   Row(
@@ -254,6 +245,57 @@ class _FamilyCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _InlineDownloadStatus extends StatelessWidget {
+  const _InlineDownloadStatus({
+    required this.controller,
+    required this.themeColor,
+  });
+
+  final ModelDownloadController controller;
+  final Color themeColor;
+
+  String _formatSpeed(double? bytesPerSecond) {
+    if (bytesPerSecond == null) return '';
+    final mbps = bytesPerSecond / (1024 * 1024);
+    if (mbps >= 1) return '${mbps.toStringAsFixed(1)} MB/s';
+    final kbps = bytesPerSecond / 1024;
+    return '${kbps.toStringAsFixed(0)} KB/s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final percent = (controller.progress * 100).clamp(0, 100).toStringAsFixed(0);
+    final speed = _formatSpeed(controller.bytesPerSecond);
+    final label = controller.isPaused
+        ? 'Paused · $percent%'
+        : controller.isFinalizing
+            ? 'Finalizing...'
+            : speed.isEmpty
+                ? '$percent%'
+                : '$percent% · $speed';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: controller.isFinalizing ? null : controller.progress,
+            minHeight: 6,
+            color: themeColor,
+            backgroundColor: Colors.grey[200],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          label,
+          style: TextStyle(color: Colors.grey[700], fontSize: 12),
+        ),
+      ],
     );
   }
 }

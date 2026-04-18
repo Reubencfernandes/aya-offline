@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -20,7 +21,26 @@ Future<Directory> _bestStorageDir() async {
 
 const int _downloadHeadroomBytes = 256 * 1024 * 1024;
 
-enum ModelDownloadPhase { idle, downloading, finalizing, completed, failed }
+enum ModelDownloadPhase {
+  idle,
+  downloading,
+  paused,
+  finalizing,
+  completed,
+  failed,
+}
+
+class DownloadCancelledException implements Exception {
+  const DownloadCancelledException();
+
+  @override
+  String toString() => 'Download cancelled by user.';
+}
+
+class _DownloadStopSignal implements Exception {
+  const _DownloadStopSignal({required this.paused});
+  final bool paused;
+}
 
 class ModelDownloadCheck {
   const ModelDownloadCheck({
@@ -179,11 +199,18 @@ class ModelManager {
 
   /// Download a model from Hugging Face with progress reporting.
   /// [onProgress] receives (bytesReceived, totalBytes). totalBytes may be -1.
+  /// Completing [pauseToken] cleanly pauses the download, preserving the .part
+  /// file so the next call resumes via HTTP Range.
+  /// Completing [cancelToken] aborts the download, deletes the .part file, and
+  /// throws [DownloadCancelledException].
   static Future<String> download(
     AyaModel model, {
     void Function(int received, int total)? onProgress,
     void Function(String status)? onStatus,
     void Function(ModelDownloadPhase phase)? onPhaseChanged,
+    void Function(int attempt, int maxAttempts)? onRetry,
+    Future<void>? pauseToken,
+    Future<void>? cancelToken,
   }) async {
     final readiness = await checkDownloadReadiness(model);
     if (!readiness.canProceed) {
@@ -198,14 +225,16 @@ class ModelManager {
     }
 
     final partialFile = File(await _partialModelPath(model));
-    const maxAttempts = 5;
+    const maxAttempts = 8;
     onPhaseChanged?.call(ModelDownloadPhase.downloading);
 
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       final existingBytes = await partialFile.exists()
           ? await partialFile.length()
           : 0;
-      final client = HttpClient();
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 30)
+        ..idleTimeout = const Duration(seconds: 60);
       IOSink? sink;
 
       try {
@@ -218,6 +247,9 @@ class ModelManager {
         } else if (attempt > 1) {
           onStatus?.call('Retrying download... ($attempt/$maxAttempts)');
         }
+        if (attempt > 1) {
+          onRetry?.call(attempt, maxAttempts);
+        }
 
         final request = await client.getUrl(Uri.parse(model.downloadUrl));
         if (existingBytes > 0) {
@@ -228,7 +260,7 @@ class ModelManager {
         if (response.statusCode != HttpStatus.ok &&
             response.statusCode != HttpStatus.partialContent) {
           throw HttpException(
-            'Download failed with HTTP ${response.statusCode}',
+            _describeHttpStatus(response.statusCode),
             uri: Uri.parse(model.downloadUrl),
           );
         }
@@ -250,11 +282,16 @@ class ModelManager {
           mode: resuming ? FileMode.append : FileMode.write,
         );
 
-        await for (final chunk in response) {
-          sink.add(chunk);
-          received += chunk.length;
-          onProgress?.call(received, totalBytes);
-        }
+        await _consumeResponse(
+          response: response,
+          sink: sink,
+          onChunk: (length) {
+            received += length;
+            onProgress?.call(received, totalBytes);
+          },
+          pauseToken: pauseToken,
+          cancelToken: cancelToken,
+        );
 
         onPhaseChanged?.call(ModelDownloadPhase.finalizing);
         onStatus?.call('Finalizing model...');
@@ -268,6 +305,22 @@ class ModelManager {
         await partialFile.rename(finalPath);
         onPhaseChanged?.call(ModelDownloadPhase.completed);
         return finalPath;
+      } on _DownloadStopSignal catch (signal) {
+        await _finalizeSinkQuietly(sink);
+        sink = null;
+
+        if (signal.paused) {
+          onPhaseChanged?.call(ModelDownloadPhase.paused);
+          onStatus?.call('Paused');
+          return finalPath;
+        }
+
+        if (await partialFile.exists()) {
+          try {
+            await partialFile.delete();
+          } catch (_) {}
+        }
+        throw const DownloadCancelledException();
       } on FileSystemException catch (error) {
         await _closeSinkQuietly(sink);
         sink = null;
@@ -285,18 +338,94 @@ class ModelManager {
         sink = null;
 
         if (!_isRetryableDownloadError(error) || attempt == maxAttempts) {
-          throw Exception(
-            'Download interrupted. Please try again. Original error: $error',
-          );
+          if (error is HttpException) {
+            throw Exception(error.message);
+          }
+          throw Exception('$error');
         }
 
-        await Future<void>.delayed(Duration(seconds: attempt));
+        final backoff = math.min(30, 2 * attempt);
+        await Future<void>.delayed(Duration(seconds: backoff));
       } finally {
         client.close(force: true);
       }
     }
 
     throw Exception('Download failed after multiple retry attempts.');
+  }
+
+  static String _describeHttpStatus(int statusCode) {
+    switch (statusCode) {
+      case 401:
+      case 403:
+        return 'Access denied (HTTP $statusCode). This model may require '
+            'signing in to Hugging Face and accepting the license.';
+      case 404:
+        return 'Model file not found (HTTP 404). The download URL may be outdated.';
+      case 429:
+        return 'Hugging Face rate limit hit (HTTP 429). Wait a minute and retry.';
+      case 500:
+      case 502:
+      case 503:
+      case 504:
+        return 'Hugging Face server error (HTTP $statusCode). Usually temporary.';
+      default:
+        return 'Download failed with HTTP $statusCode.';
+    }
+  }
+
+  static Future<void> _consumeResponse({
+    required HttpClientResponse response,
+    required IOSink sink,
+    required void Function(int length) onChunk,
+    Future<void>? pauseToken,
+    Future<void>? cancelToken,
+  }) async {
+    final completer = Completer<void>();
+    late final StreamSubscription<List<int>> subscription;
+    subscription = response.listen(
+      (chunk) {
+        sink.add(chunk);
+        onChunk(chunk.length);
+      },
+      onError: (Object error, StackTrace stack) {
+        if (!completer.isCompleted) completer.completeError(error, stack);
+      },
+      onDone: () {
+        if (!completer.isCompleted) completer.complete();
+      },
+      cancelOnError: true,
+    );
+
+    final pauseFuture = pauseToken?.then(
+      (_) => const _DownloadStopSignal(paused: true),
+    );
+    final cancelFuture = cancelToken?.then(
+      (_) => const _DownloadStopSignal(paused: false),
+    );
+
+    final racers = <Future<Object?>>[
+      completer.future.then<Object?>((_) => null),
+      ?pauseFuture,
+      ?cancelFuture,
+    ];
+
+    final outcome = await Future.any(racers);
+
+    if (outcome is _DownloadStopSignal) {
+      await subscription.cancel();
+      throw outcome;
+    }
+  }
+
+  static Future<void> _finalizeSinkQuietly(IOSink? sink) async {
+    if (sink == null) return;
+    try {
+      await sink.flush();
+    } catch (_) {}
+    try {
+      await sink.close();
+    } catch (_) {}
   }
 
   static bool _isOutOfSpace(FileSystemException error) {
@@ -311,7 +440,8 @@ class ModelManager {
   static bool _isRetryableDownloadError(Object error) {
     if (error is SocketException ||
         error is HandshakeException ||
-        error is TlsException) {
+        error is TlsException ||
+        error is TimeoutException) {
       return true;
     }
 
@@ -319,7 +449,9 @@ class ModelManager {
       final message = error.message.toLowerCase();
       return message.contains('connection closed') ||
           message.contains('timed out') ||
-          message.contains('connection reset');
+          message.contains('connection reset') ||
+          message.contains('server error') ||
+          message.contains('rate limit');
     }
 
     return false;

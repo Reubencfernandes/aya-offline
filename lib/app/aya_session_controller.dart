@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../engine/engine.dart';
@@ -106,7 +108,7 @@ class AyaSessionController extends ChangeNotifier {
 
   @override
   void dispose() {
-    _engine.dispose();
+    unawaited(_engine.dispose().catchError((Object _) {}));
     super.dispose();
   }
 }

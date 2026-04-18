@@ -3,21 +3,17 @@ import Foundation
 import UIKit
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+@objc class AppDelegate: FlutterAppDelegate {
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    GeneratedPluginRegistrant.register(with: self)
     let didFinish = super.application(application, didFinishLaunchingWithOptions: launchOptions)
     if let controller = window?.rootViewController as? FlutterViewController {
       registerStorageChannel(binaryMessenger: controller.binaryMessenger)
     }
     return didFinish
-  }
-
-  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
-    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-    registerStorageChannel(binaryMessenger: engineBridge.applicationRegistrar.messenger())
   }
 
   private func registerStorageChannel(binaryMessenger: FlutterBinaryMessenger) {
