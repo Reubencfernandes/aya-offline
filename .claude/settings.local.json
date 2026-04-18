@@ -31,7 +31,10 @@
       "Bash(flutter --version)",
       "Bash(pkill -f \"flutter install\")",
       "Bash(git diff *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git -C /Users/reubenfernandes/projects/aya-offline/flutter_llama/llama.cpp log --oneline -1)"
     ]
   }
 }

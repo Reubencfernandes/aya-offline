@@ -140,25 +140,30 @@ Java_net_nativemind_flutter_1llama_FlutterLlamaPlugin_nativeGenerate(
     
     std::string prompt_text(prompt_str);
     env->ReleaseStringUTFChars(prompt, prompt_str);
-    
+
+    // Reset KV cache so each generation starts from a clean context —
+    // otherwise tokens from the previous call (e.g. a translate prompt)
+    // stay in the cache and bleed into the next generation (e.g. chat).
+    llama_memory_clear(llama_get_memory(g_context), true);
+
     // Tokenize prompt
     const int n_prompt = -llama_tokenize(g_vocab, prompt_text.c_str(), prompt_text.size(), NULL, 0, true, true);
     std::vector<llama_token> prompt_tokens(n_prompt);
-    
+
     if (llama_tokenize(g_vocab, prompt_text.c_str(), prompt_text.size(), prompt_tokens.data(), prompt_tokens.size(), true, true) < 0) {
         LOGE("Failed to tokenize prompt");
         return nullptr;
     }
-    
+
     // Create batch
     llama_batch batch = llama_batch_get_one(prompt_tokens.data(), prompt_tokens.size());
-    
+
     // Decode prompt
     if (llama_decode(g_context, batch) != 0) {
         LOGE("Failed to decode prompt");
         return nullptr;
     }
-    
+
     // Update sampler with new parameters
     llama_sampler_free(g_sampler);
     
@@ -256,23 +261,28 @@ Java_net_nativemind_flutter_1llama_FlutterLlamaPlugin_nativeGenerateStreamInit(
     g_should_stop = false;
     g_stream_tokens.clear();
     g_stream_pos = 0;
-    
+
     const char* prompt_str = env->GetStringUTFChars(prompt, nullptr);
     std::string prompt_text(prompt_str);
     env->ReleaseStringUTFChars(prompt, prompt_str);
-    
+
+    // Reset KV cache so each generation starts from a clean context —
+    // otherwise tokens from the previous call (e.g. a translate prompt)
+    // stay in the cache and bleed into the next generation (e.g. chat).
+    llama_memory_clear(llama_get_memory(g_context), true);
+
     // Tokenize prompt
     const int n_prompt = -llama_tokenize(g_vocab, prompt_text.c_str(), prompt_text.size(), NULL, 0, true, true);
     std::vector<llama_token> prompt_tokens(n_prompt);
-    
+
     if (llama_tokenize(g_vocab, prompt_text.c_str(), prompt_text.size(), prompt_tokens.data(), prompt_tokens.size(), true, true) < 0) {
         LOGE("Failed to tokenize prompt");
         return;
     }
-    
+
     // Create batch
     llama_batch batch = llama_batch_get_one(prompt_tokens.data(), prompt_tokens.size());
-    
+
     // Decode prompt
     if (llama_decode(g_context, batch) != 0) {
         LOGE("Failed to decode prompt");
