@@ -41,7 +41,7 @@ class AyaApp extends StatelessWidget {
     const seed = Color(0xFF0F766E);
 
     return MaterialApp(
-      title: 'Aya',
+      title: 'Tiny Aya Mobile',
       debugShowCheckedModeBanner: false,
       scaffoldMessengerKey: scaffoldMessengerKey,
       themeMode: ThemeMode.light,
