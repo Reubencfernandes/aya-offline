@@ -34,7 +34,10 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(git push *)",
-      "Bash(git -C /Users/reubenfernandes/projects/aya-offline/flutter_llama/llama.cpp log --oneline -1)"
+      "Bash(git -C /Users/reubenfernandes/projects/aya-offline/flutter_llama/llama.cpp log --oneline -1)",
+      "Bash(dart run *)",
+      "Bash(git -C flutter_llama/llama.cpp status --short)",
+      "Bash(git -C flutter_llama/llama.cpp log --oneline -1)"
     ]
   }
 }
