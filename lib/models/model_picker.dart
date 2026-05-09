@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app/model_download_controller.dart';
@@ -7,8 +9,13 @@ import 'model_manager.dart';
 /// Screen for browsing, downloading, and selecting Aya model variants.
 class ModelPickerScreen extends StatefulWidget {
   final ModelDownloadController downloadController;
+  final FutureOr<void> Function(AyaModel model)? onModelDeleted;
 
-  const ModelPickerScreen({super.key, required this.downloadController});
+  const ModelPickerScreen({
+    super.key,
+    required this.downloadController,
+    this.onModelDeleted,
+  });
 
   @override
   State<ModelPickerScreen> createState() => _ModelPickerScreenState();
@@ -45,6 +52,7 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
 
   Future<void> _deleteModel(AyaModel model) async {
     await widget.downloadController.deleteModel(model);
+    await widget.onModelDeleted?.call(model);
   }
 
   Future<String> modelPath(AyaModel model) => ModelManager.modelPath(model);
@@ -59,7 +67,11 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
       builder: (context, _) {
         return Scaffold(
           backgroundColor: Colors.white,
-          appBar: AppBar(title: const Text('Select your preference'), centerTitle: true, backgroundColor: Colors.white),
+          appBar: AppBar(
+            title: const Text('Select your preference'),
+            centerTitle: true,
+            backgroundColor: Colors.white,
+          ),
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -126,27 +138,40 @@ class _FamilyCard extends StatelessWidget {
 
   Color _familyThemeColor(String family) {
     switch (family) {
-      case 'global': return const Color(0xFF5EB381);
-      case 'water': return const Color(0xFF2647B7);
-      case 'earth': return const Color(0xFF284818);
-      case 'fire': return const Color(0xFFD47400);
-      default: return const Color(0xFF5EB381);
+      case 'global':
+        return const Color(0xFF5EB381);
+      case 'water':
+        return const Color(0xFF2647B7);
+      case 'earth':
+        return const Color(0xFF284818);
+      case 'fire':
+        return const Color(0xFFD47400);
+      default:
+        return const Color(0xFF5EB381);
     }
   }
 
-  String _capitalize(String s) => s.isNotEmpty ? '${s[0].toUpperCase()}${s.substring(1)}' : s;
+  String _capitalize(String s) =>
+      s.isNotEmpty ? '${s[0].toUpperCase()}${s.substring(1)}' : s;
 
   @override
   Widget build(BuildContext context) {
     if (models.isEmpty) return const SizedBox.shrink();
-    
+
     // Default to displaying the recommended quantization
-    final model = models.firstWhere((m) => m.quant == 'q4_0', orElse: () => models.first);
+    final model = models.firstWhere(
+      (m) => m.quant == 'q4_0',
+      orElse: () => models.first,
+    );
     final themeColor = _familyThemeColor(model.family);
     final isDownloaded = controller.downloaded.contains(model.fileName);
     final isActiveDownload = controller.downloadingFileName == model.fileName;
     final readiness = controller.readinessFor(model);
-    final hasInsufficientSpace = !isDownloaded && !isActiveDownload && readiness != null && !readiness.canProceed;
+    final hasInsufficientSpace =
+        !isDownloaded &&
+        !isActiveDownload &&
+        readiness != null &&
+        !readiness.canProceed;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -205,8 +230,13 @@ class _FamilyCard extends StatelessWidget {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: themeColor,
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                         onPressed: () => onSelect(model),
                         child: const Text('Use Model'),
@@ -216,8 +246,13 @@ class _FamilyCard extends StatelessWidget {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.red[50],
                           foregroundColor: Colors.red,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                         onPressed: () => onDelete(model),
                         icon: const Icon(Icons.delete, size: 18),
@@ -232,14 +267,28 @@ class _FamilyCard extends StatelessWidget {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: themeColor,
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
-                      onPressed: hasInsufficientSpace ? null : () => onDownload(model),
-                      icon: Icon(hasInsufficientSpace ? Icons.storage : Icons.download, size: 18),
-                      label: Text(hasInsufficientSpace ? 'Not enough storage' : 'Download'),
+                      onPressed: hasInsufficientSpace
+                          ? null
+                          : () => onDownload(model),
+                      icon: Icon(
+                        hasInsufficientSpace ? Icons.storage : Icons.download,
+                        size: 18,
+                      ),
+                      label: Text(
+                        hasInsufficientSpace
+                            ? 'Not enough storage'
+                            : 'Download',
+                      ),
                     ),
-                  )
+                  ),
               ],
             ),
           ),
@@ -268,15 +317,17 @@ class _InlineDownloadStatus extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final percent = (controller.progress * 100).clamp(0, 100).toStringAsFixed(0);
+    final percent = (controller.progress * 100)
+        .clamp(0, 100)
+        .toStringAsFixed(0);
     final speed = _formatSpeed(controller.bytesPerSecond);
     final label = controller.isPaused
         ? 'Paused · $percent%'
         : controller.isFinalizing
-            ? 'Finalizing...'
-            : speed.isEmpty
-                ? '$percent%'
-                : '$percent% · $speed';
+        ? 'Finalizing...'
+        : speed.isEmpty
+        ? '$percent%'
+        : '$percent% · $speed';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -291,10 +342,7 @@ class _InlineDownloadStatus extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 6),
-        Text(
-          label,
-          style: TextStyle(color: Colors.grey[700], fontSize: 12),
-        ),
+        Text(label, style: TextStyle(color: Colors.grey[700], fontSize: 12)),
       ],
     );
   }

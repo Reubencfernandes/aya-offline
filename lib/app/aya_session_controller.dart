@@ -77,6 +77,22 @@ class AyaSessionController extends ChangeNotifier {
     }
   }
 
+  Future<void> clearModelIfDeleted(AyaModel model) async {
+    final activeFileName =
+        _selectedModel?.fileName ?? _modelPath?.split('/').last;
+    if (activeFileName != model.fileName) {
+      return;
+    }
+
+    await _engine.dispose().catchError((Object _) {});
+    _modelPath = null;
+    _selectedModel = null;
+    _isChecking = false;
+    _isModelLoading = false;
+    _status = 'Download a model from settings to begin.';
+    notifyListeners();
+  }
+
   Stream<String> generateChatReply(
     List<AyaConversationTurn> history,
     String message,

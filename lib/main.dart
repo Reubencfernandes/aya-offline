@@ -153,7 +153,10 @@ class _AyaHomeShellState extends State<AyaHomeShell>
     _isSettingsOpen = true;
     final selectedPath = await Navigator.of(context).push<String>(
       MaterialPageRoute(
-        builder: (_) => ModelPickerScreen(downloadController: _downloads),
+        builder: (_) => ModelPickerScreen(
+          downloadController: _downloads,
+          onModelDeleted: _session.clearModelIfDeleted,
+        ),
       ),
     );
     _isSettingsOpen = false;

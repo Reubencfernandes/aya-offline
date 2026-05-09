@@ -70,6 +70,11 @@ void main() {
       expect(controller.completedDownloadVersion, 1);
       expect(controller.lastErrorMessage, isNull);
       expect(controller.downloaded.contains(_testModel.fileName), isTrue);
+
+      await controller.deleteModel(_testModel);
+
+      expect(controller.lastCompletedPath, isNull);
+      expect(controller.downloaded.contains(_testModel.fileName), isFalse);
     },
   );
 

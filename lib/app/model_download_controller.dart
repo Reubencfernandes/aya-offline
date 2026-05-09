@@ -248,6 +248,9 @@ class ModelDownloadController extends ChangeNotifier {
   Future<void> deleteModel(AyaModel model) async {
     await _deleteModel(model);
     _downloaded.remove(model.fileName);
+    if (_lastCompletedPath?.split('/').last == model.fileName) {
+      _lastCompletedPath = null;
+    }
     await refreshReadiness();
     notifyListeners();
   }
