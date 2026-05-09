@@ -11,6 +11,7 @@ import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import '../app/aya_session_controller.dart';
+import '../widgets/animated_gradient_text.dart';
 import 'language_option.dart';
 
 class TranslationHistoryItem {
@@ -764,17 +765,12 @@ class _TranslateScreenState extends State<TranslateScreen> {
                     color: Colors.black87,
                   ),
                 ),
-                ShaderMask(
-                  shaderCallback: (bounds) => LinearGradient(
-                    colors: _gradientColors,
-                  ).createShader(bounds),
-                  child: Text(
-                    modelName,
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
+                AnimatedGradientText(
+                  modelName,
+                  colors: _gradientColors,
+                  style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ],

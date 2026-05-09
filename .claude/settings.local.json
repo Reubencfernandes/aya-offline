@@ -37,7 +37,17 @@
       "Bash(git -C /Users/reubenfernandes/projects/aya-offline/flutter_llama/llama.cpp log --oneline -1)",
       "Bash(dart run *)",
       "Bash(git -C flutter_llama/llama.cpp status --short)",
-      "Bash(git -C flutter_llama/llama.cpp log --oneline -1)"
+      "Bash(git -C flutter_llama/llama.cpp log --oneline -1)",
+      "Bash(git fetch *)",
+      "Bash(keytool -help)",
+      "Bash(git mv *)",
+      "Bash(flutter build *)",
+      "Bash(sips -g pixelWidth -g pixelHeight /Users/reubenfernandes/projects/aya-offline/assets/images/tiny_aya_logo.png)",
+      "Bash(sips -g pixelWidth -g pixelHeight /Users/reubenfernandes/projects/aya-offline/ios/Runner/Assets.xcassets/LaunchImage.imageset/LaunchImage@3x.png)",
+      "Bash(sips -z 200 200 /Users/reubenfernandes/projects/aya-offline/assets/images/tiny_aya_logo.png --out LaunchImage.png)",
+      "Bash(sips -z 400 400 /Users/reubenfernandes/projects/aya-offline/assets/images/tiny_aya_logo.png --out LaunchImage@2x.png)",
+      "Bash(sips -z 600 600 /Users/reubenfernandes/projects/aya-offline/assets/images/tiny_aya_logo.png --out LaunchImage@3x.png)",
+      "Bash(sips -g pixelWidth -g pixelHeight LaunchImage.png LaunchImage@2x.png LaunchImage@3x.png)"
     ]
   }
 }

@@ -103,12 +103,16 @@ class AyaHomeShell extends StatefulWidget {
   State<AyaHomeShell> createState() => _AyaHomeShellState();
 }
 
-class _AyaHomeShellState extends State<AyaHomeShell> {
+class _AyaHomeShellState extends State<AyaHomeShell>
+    with SingleTickerProviderStateMixin {
   late final AyaSessionController _session;
   late final ModelDownloadController _downloads;
+  late final AnimationController _tabTransitionController;
   late final bool _ownsSession;
   late final bool _ownsDownloads;
   int _selectedIndex = 0;
+  int? _previousIndex;
+  int _tabDirection = 1;
   int _lastHandledDownloadVersion = 0;
   bool _isSettingsOpen = false;
 
@@ -121,6 +125,10 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
     _ownsDownloads = widget.downloadController == null;
     _session = widget.sessionController ?? AyaSessionController();
     _downloads = widget.downloadController ?? ModelDownloadController();
+    _tabTransitionController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    )..value = 1;
     _session.initialize();
     _downloads.initialize();
     _downloads.addListener(_handleDownloadStateChanged);
@@ -128,7 +136,12 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
   }
 
   void _handleSessionStateChanged() {
-    if (!_session.isChecking && !_session.isReady && !_downloads.isBusy && !_didAutoOpenSettings && !_isSettingsOpen && mounted) {
+    if (!_session.isChecking &&
+        !_session.isReady &&
+        !_downloads.isBusy &&
+        !_didAutoOpenSettings &&
+        !_isSettingsOpen &&
+        mounted) {
       _didAutoOpenSettings = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _openModelSettings();
@@ -175,7 +188,16 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
   }
 
   void _switchToTab(int index) {
-    setState(() => _selectedIndex = index);
+    if (index == _selectedIndex) {
+      return;
+    }
+
+    setState(() {
+      _previousIndex = _selectedIndex;
+      _tabDirection = index > _selectedIndex ? 1 : -1;
+      _selectedIndex = index;
+    });
+    _tabTransitionController.forward(from: 0);
   }
 
   @override
@@ -186,9 +208,7 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
         if (_downloads.isBusy) {
           return Scaffold(
             backgroundColor: Colors.white,
-            body: Center(
-              child: _FullScreenDownload(downloads: _downloads),
-            ),
+            body: Center(child: _FullScreenDownload(downloads: _downloads)),
           );
         }
 
@@ -201,8 +221,11 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
                   onDismiss: _downloads.clearLastError,
                 ),
               Expanded(
-                child: IndexedStack(
+                child: _AnimatedTabStack(
                   index: _selectedIndex,
+                  previousIndex: _previousIndex,
+                  direction: _tabDirection,
+                  animation: _tabTransitionController,
                   children: [
                     TranslateScreen(
                       key: ValueKey('translate-${_session.modelPath}'),
@@ -230,6 +253,7 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
   void dispose() {
     _downloads.removeListener(_handleDownloadStateChanged);
     _session.removeListener(_handleSessionStateChanged);
+    _tabTransitionController.dispose();
     if (_ownsDownloads) {
       _downloads.dispose();
     }
@@ -240,6 +264,90 @@ class _AyaHomeShellState extends State<AyaHomeShell> {
   }
 }
 
+class _AnimatedTabStack extends StatelessWidget {
+  final int index;
+  final int? previousIndex;
+  final int direction;
+  final Animation<double> animation;
+  final List<Widget> children;
+
+  const _AnimatedTabStack({
+    required this.index,
+    required this.previousIndex,
+    required this.direction,
+    required this.animation,
+    required this.children,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (reduceMotion) {
+      return IndexedStack(index: index, children: children);
+    }
+
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeOutCubic,
+    );
+
+    return AnimatedBuilder(
+      animation: curved,
+      builder: (context, _) {
+        final isTransitioning =
+            previousIndex != null &&
+            previousIndex != index &&
+            animation.value < 1;
+        final value = curved.value;
+
+        return Stack(
+          fit: StackFit.expand,
+          children: List.generate(children.length, (childIndex) {
+            final isCurrent = childIndex == index;
+            final isPrevious = isTransitioning && childIndex == previousIndex;
+
+            if (!isCurrent && !isPrevious) {
+              return Offstage(
+                offstage: true,
+                child: TickerMode(enabled: false, child: children[childIndex]),
+              );
+            }
+
+            var offset = Offset.zero;
+            var opacity = 1.0;
+            if (isTransitioning && isCurrent) {
+              offset = Offset(direction * (1 - value) * 0.08, 0);
+              opacity = 0.72 + (0.28 * value);
+            } else if (isPrevious) {
+              offset = Offset(-direction * value * 0.04, 0);
+              opacity = 1 - (0.18 * value);
+            }
+
+            return Offstage(
+              offstage: false,
+              child: TickerMode(
+                enabled: isCurrent,
+                child: IgnorePointer(
+                  ignoring: !isCurrent,
+                  child: Opacity(
+                    opacity: opacity,
+                    child: FractionalTranslation(
+                      translation: offset,
+                      child: children[childIndex],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+}
+
 class _FullScreenDownload extends StatelessWidget {
   final ModelDownloadController downloads;
 
@@ -247,11 +355,16 @@ class _FullScreenDownload extends StatelessWidget {
 
   Color _themeColor(String family) {
     switch (family) {
-      case 'global': return const Color(0xFF5EB381);
-      case 'water': return const Color(0xFF2647B7);
-      case 'earth': return const Color(0xFF284818);
-      case 'fire': return const Color(0xFFD47400);
-      default: return const Color(0xFF5EB381);
+      case 'global':
+        return const Color(0xFF5EB381);
+      case 'water':
+        return const Color(0xFF2647B7);
+      case 'earth':
+        return const Color(0xFF284818);
+      case 'fire':
+        return const Color(0xFFD47400);
+      default:
+        return const Color(0xFF5EB381);
     }
   }
 
@@ -339,9 +452,7 @@ class _FullScreenDownload extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
-            model == null
-                ? 'Aya'
-                : '${model.displayName} ${model.quant}',
+            model == null ? 'Aya' : '${model.displayName} ${model.quant}',
             style: const TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w600,
@@ -365,10 +476,7 @@ class _FullScreenDownload extends StatelessWidget {
               total > 0
                   ? '${_formatMB(received)} / ${_formatMB(total)}'
                   : _formatMB(received),
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.grey.shade700,
-              ),
+              style: TextStyle(fontSize: 16, color: Colors.grey.shade700),
             ),
             const SizedBox(height: 24),
             ClipRRect(
@@ -467,9 +575,7 @@ class _ActionRow extends StatelessWidget {
         ? FilledButton.icon(
             style: FilledButton.styleFrom(backgroundColor: color),
             onPressed: () => downloads.resume(),
-            icon: Icon(
-              downloads.isFailed ? Icons.refresh : Icons.play_arrow,
-            ),
+            icon: Icon(downloads.isFailed ? Icons.refresh : Icons.play_arrow),
             label: Text(downloads.isFailed ? 'Retry' : 'Resume'),
           )
         : FilledButton.icon(
@@ -541,4 +647,3 @@ class _DownloadErrorBanner extends StatelessWidget {
     );
   }
 }
-

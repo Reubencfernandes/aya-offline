@@ -7,6 +7,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 
 import '../app/aya_session_controller.dart';
 import '../engine/engine.dart';
+import '../widgets/animated_gradient_text.dart';
 
 class ChatMessage {
   final String text;
@@ -383,17 +384,12 @@ class _ChatScreenState extends State<ChatScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          ShaderMask(
-                            shaderCallback: (bounds) => LinearGradient(
-                              colors: _gradientColors,
-                            ).createShader(bounds),
-                            child: Text(
-                              _greeting,
-                              style: TextStyle(
-                                fontSize: 28,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
+                          AnimatedGradientText(
+                            _greeting,
+                            colors: _gradientColors,
+                            style: const TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -446,13 +442,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(24),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Colors.black12,
-                          blurRadius: 10,
-                          offset: Offset(0, 4),
-                        ),
-                      ],
+                      border: Border.all(color: const Color(0xFFE8E8E8)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
