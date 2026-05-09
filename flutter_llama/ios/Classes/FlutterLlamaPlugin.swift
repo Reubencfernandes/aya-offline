@@ -65,6 +65,7 @@ public class FlutterLlamaPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     public func onCancel(withArguments arguments: Any?) -> FlutterError? {
         self.eventSink = nil
         shouldStop = true
+        llama_stop_generation()
         return nil
     }
     
@@ -104,6 +105,7 @@ public class FlutterLlamaPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
                 }
                 return
             }
+            self.prepareLargeModelFile(atPath: modelPath)
             
             self.modelPath = modelPath
 
@@ -128,14 +130,84 @@ public class FlutterLlamaPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
                     NSLog("[FlutterLlama] GPU layers: \(nGpuLayers), threads: \(nThreads), context: \(contextSize)")
                     result(true)
                 } else {
+                    let nativeError = String(cString: llama_last_error()).trimmingCharacters(in: .whitespacesAndNewlines)
+                    var details = self.modelLoadDetails(
+                        path: modelPath,
+                        nThreads: nThreads,
+                        nGpuLayers: nGpuLayers,
+                        contextSize: contextSize,
+                        batchSize: batchSize,
+                        useGpu: useGpu
+                    )
+                    if !nativeError.isEmpty {
+                        details["nativeError"] = nativeError
+                    }
                     result(FlutterError(
                         code: "INIT_FAILED",
-                        message: "Failed to initialize model",
-                        details: nil
+                        message: nativeError.isEmpty ? "Failed to initialize model" : nativeError,
+                        details: details
                     ))
                 }
             }
         }
+    }
+
+    private func prepareLargeModelFile(atPath path: String) {
+        let fileManager = FileManager.default
+
+        do {
+            try fileManager.setAttributes(
+                [.protectionKey: FileProtectionType.none],
+                ofItemAtPath: path
+            )
+        } catch {
+            NSLog("[FlutterLlama] Unable to disable file protection for model: \(error.localizedDescription)")
+        }
+
+        var url = URL(fileURLWithPath: path)
+        do {
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try url.setResourceValues(values)
+        } catch {
+            NSLog("[FlutterLlama] Unable to exclude model from backup: \(error.localizedDescription)")
+        }
+    }
+
+    private func modelLoadDetails(
+        path: String,
+        nThreads: Int,
+        nGpuLayers: Int,
+        contextSize: Int,
+        batchSize: Int,
+        useGpu: Bool
+    ) -> [String: Any] {
+        let fileManager = FileManager.default
+        let attributes = try? fileManager.attributesOfItem(atPath: path)
+        let size = attributes?[.size] as? NSNumber
+        let protection = attributes?[.protectionKey] as? String
+
+        return [
+            "path": path,
+            "fileSize": size?.int64Value ?? -1,
+            "readable": fileManager.isReadableFile(atPath: path),
+            "protection": protection ?? "unknown",
+            "nThreads": nThreads,
+            "nGpuLayers": nGpuLayers,
+            "contextSize": contextSize,
+            "batchSize": batchSize,
+            "useGpu": useGpu
+        ]
+    }
+
+    private func stopSequencesPayload(from args: [String: Any]) -> String {
+        guard let stopSequences = args["stopSequences"] as? [String] else {
+            return ""
+        }
+
+        return stopSequences
+            .filter { !$0.isEmpty }
+            .joined(separator: "\u{1F}")
     }
     
     // MARK: - Generate (blocking)
@@ -169,6 +241,7 @@ public class FlutterLlamaPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             let topK = (args["topK"] as? Int) ?? 40
             let maxTokens = (args["maxTokens"] as? Int) ?? 512
             let repeatPenalty = (args["repeatPenalty"] as? Double) ?? 1.1
+            let stopSequences = self.stopSequencesPayload(from: args)
             
             self.shouldStop = false
             let startTime = Date()
@@ -178,17 +251,20 @@ public class FlutterLlamaPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             var tokensGenerated: Int32 = 0
 
             let success = prompt.withCString { cPrompt -> Bool in
-                return llama_generate(
-                    cPrompt,
-                    Float(temperature),
-                    Float(topP),
-                    Int32(topK),
-                    Int32(maxTokens),
-                    Float(repeatPenalty),
-                    &outputBuffer,
-                    Int32(outputBuffer.count),
-                    &tokensGenerated
-                )
+                stopSequences.withCString { cStopSequences -> Bool in
+                    return llama_generate(
+                        cPrompt,
+                        Float(temperature),
+                        Float(topP),
+                        Int32(topK),
+                        Int32(maxTokens),
+                        Float(repeatPenalty),
+                        cStopSequences,
+                        &outputBuffer,
+                        Int32(outputBuffer.count),
+                        &tokensGenerated
+                    )
+                }
             }
             
             let generationTime = Int(Date().timeIntervalSince(startTime) * 1000)
@@ -254,19 +330,23 @@ public class FlutterLlamaPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             let topK = (args["topK"] as? Int) ?? 40
             let maxTokens = (args["maxTokens"] as? Int) ?? 512
             let repeatPenalty = (args["repeatPenalty"] as? Double) ?? 1.1
+            let stopSequences = self.stopSequencesPayload(from: args)
             
             self.shouldStop = false
 
             // Initialize streaming generation
             prompt.withCString { cPrompt in
-                llama_generate_stream_init(
-                    cPrompt,
-                    Float(temperature),
-                    Float(topP),
-                    Int32(topK),
-                    Int32(maxTokens),
-                    Float(repeatPenalty)
-                )
+                stopSequences.withCString { cStopSequences in
+                    llama_generate_stream_init(
+                        cPrompt,
+                        Float(temperature),
+                        Float(topP),
+                        Int32(topK),
+                        Int32(maxTokens),
+                        Float(repeatPenalty),
+                        cStopSequences
+                    )
+                }
             }
             
             // Stream tokens one by one
@@ -360,6 +440,7 @@ func llama_generate(
     _ topK: Int32,
     _ maxTokens: Int32,
     _ repeatPenalty: Float,
+    _ stopSequences: UnsafePointer<CChar>,
     _ output: UnsafeMutablePointer<CChar>,
     _ outputSize: Int32,
     _ tokensGenerated: UnsafeMutablePointer<Int32>
@@ -372,7 +453,8 @@ func llama_generate_stream_init(
     _ topP: Float,
     _ topK: Int32,
     _ maxTokens: Int32,
-    _ repeatPenalty: Float
+    _ repeatPenalty: Float,
+    _ stopSequences: UnsafePointer<CChar>
 )
 
 @_silgen_name("llama_generate_stream_next")
@@ -396,3 +478,6 @@ func llama_cpp_bridge_free_model()
 
 @_silgen_name("llama_stop_generation")
 func llama_stop_generation()
+
+@_silgen_name("llama_last_error")
+func llama_last_error() -> UnsafePointer<CChar>

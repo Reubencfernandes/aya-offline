@@ -38,13 +38,19 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final _controller = TextEditingController();
+  final _inputFocusNode = FocusNode();
   final _scrollController = ScrollController();
   final _messages = <ChatMessage>[];
   bool _isGenerating = false;
   StreamSubscription<String>? _chatSub;
   final FlutterTts _tts = FlutterTts();
   Timer? _generationTimer;
+  Timer? _streamUiFlushTimer;
   int _generationSeconds = 0;
+  int _generationTokens = 0;
+  DateTime? _generationStartedAt;
+  DateTime? _firstTokenAt;
+  String _streamedAssistantText = '';
   int? _speakingIndex;
 
   @override
@@ -64,6 +70,35 @@ class _ChatScreenState extends State<ChatScreen> {
     final m = seconds ~/ 60;
     final s = seconds % 60;
     return '${m}m ${s}s';
+  }
+
+  String _generationStatusLabel() {
+    final startedAt = _generationStartedAt;
+    if (startedAt == null) return _formatElapsed(_generationSeconds);
+
+    final firstTokenAt = _firstTokenAt;
+    if (firstTokenAt == null) {
+      return 'Preparing… ${_formatElapsed(_generationSeconds)}';
+    }
+
+    final firstTokenDelay = firstTokenAt.difference(startedAt);
+    final decodeElapsed = DateTime.now().difference(firstTokenAt);
+    final decodeSeconds = decodeElapsed.inMilliseconds <= 0
+        ? 1.0
+        : decodeElapsed.inMilliseconds / 1000.0;
+    final tps = _generationTokens / decodeSeconds;
+
+    return 'First token ${_formatElapsed(firstTokenDelay.inSeconds)} · '
+        '${tps.toStringAsFixed(1)} tok/s';
+  }
+
+  void _focusInput() {
+    if (_isGenerating) {
+      return;
+    }
+
+    _inputFocusNode.requestFocus();
+    SystemChannels.textInput.invokeMethod<void>('TextInput.show');
   }
 
   Future<void> _toggleSpeak(int index, String text) async {
@@ -93,22 +128,32 @@ class _ChatScreenState extends State<ChatScreen> {
   Color get _themeColor {
     final family = widget.controller.selectedModel?.family ?? 'global';
     switch (family) {
-      case 'global': return const Color(0xFF5EB381);
-      case 'water': return const Color(0xFF2647B7);
-      case 'earth': return const Color(0xFF284818);
-      case 'fire': return const Color(0xFFD47400);
-      default: return const Color(0xFF5EB381);
+      case 'global':
+        return const Color(0xFF5EB381);
+      case 'water':
+        return const Color(0xFF2647B7);
+      case 'earth':
+        return const Color(0xFF284818);
+      case 'fire':
+        return const Color(0xFFD47400);
+      default:
+        return const Color(0xFF5EB381);
     }
   }
 
   List<Color> get _gradientColors {
     final family = widget.controller.selectedModel?.family ?? 'global';
     switch (family) {
-      case 'global': return [const Color(0xFF3898C8), const Color(0xFF4FC35C)];
-      case 'water': return [const Color(0xFF41A9E1), const Color(0xFF2647B7)];
-      case 'earth': return [const Color(0xFF8BCA84), const Color(0xFF284818)];
-      case 'fire': return [const Color(0xFFFFB75E), const Color(0xFFD47400)];
-      default: return [const Color(0xFF3898C8), const Color(0xFF4FC35C)];
+      case 'global':
+        return [const Color(0xFF3898C8), const Color(0xFF4FC35C)];
+      case 'water':
+        return [const Color(0xFF41A9E1), const Color(0xFF2647B7)];
+      case 'earth':
+        return [const Color(0xFF8BCA84), const Color(0xFF284818)];
+      case 'fire':
+        return [const Color(0xFFFFB75E), const Color(0xFFD47400)];
+      default:
+        return [const Color(0xFF3898C8), const Color(0xFF4FC35C)];
     }
   }
 
@@ -139,6 +184,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _controller.clear();
     _generationTimer?.cancel();
+    _streamUiFlushTimer?.cancel();
+    _streamUiFlushTimer = null;
+    _streamedAssistantText = '';
     setState(() {
       _messages.add(ChatMessage(text: text, isUser: true));
       _messages.add(
@@ -146,6 +194,9 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       _isGenerating = true;
       _generationSeconds = 0;
+      _generationTokens = 0;
+      _generationStartedAt = DateTime.now();
+      _firstTokenAt = null;
     });
     _generationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
@@ -154,31 +205,36 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
 
     final completer = Completer<void>();
-    var fullResponse = '';
-    _chatSub = widget.controller.generateChatReply(history, text).listen(
-      (token) {
-        fullResponse += token;
-        if (!mounted) return;
-        setState(() {
-          _messages[_messages.length - 1] = ChatMessage(
-            text: _cleanModelOutput(fullResponse),
-            isUser: false,
-          );
-        });
-        _scrollToBottom();
-      },
-      onError: (Object error) {
-        if (!completer.isCompleted) completer.completeError(error);
-      },
-      onDone: () {
-        if (!completer.isCompleted) completer.complete();
-      },
-      cancelOnError: true,
-    );
+    var completedNormally = false;
+    _chatSub = widget.controller
+        .generateChatReply(history, text)
+        .listen(
+          (token) {
+            _streamedAssistantText += token;
+            _generationTokens++;
+            _firstTokenAt ??= DateTime.now();
+
+            if (_generationTokens == 1) {
+              _flushAssistantStream();
+            } else {
+              _scheduleAssistantStreamFlush();
+            }
+          },
+          onError: (Object error) {
+            if (!completer.isCompleted) completer.completeError(error);
+          },
+          onDone: () {
+            if (!completer.isCompleted) completer.complete();
+          },
+          cancelOnError: true,
+        );
 
     try {
       await completer.future;
+      completedNormally = true;
     } catch (error) {
+      _streamUiFlushTimer?.cancel();
+      _streamUiFlushTimer = null;
       if (mounted) {
         setState(() {
           _messages[_messages.length - 1] = ChatMessage(
@@ -188,6 +244,11 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     } finally {
+      _streamUiFlushTimer?.cancel();
+      _streamUiFlushTimer = null;
+      if (completedNormally && _streamedAssistantText.isNotEmpty) {
+        _flushAssistantStream();
+      }
       await _chatSub?.cancel();
       _chatSub = null;
       _generationTimer?.cancel();
@@ -205,6 +266,25 @@ class _ChatScreenState extends State<ChatScreen> {
         .replaceAll('<|START_RESPONSE|>', '')
         .replaceAll('<|END_RESPONSE|>', '')
         .trim();
+  }
+
+  void _scheduleAssistantStreamFlush() {
+    if (_streamUiFlushTimer?.isActive ?? false) return;
+    _streamUiFlushTimer = Timer(const Duration(milliseconds: 80), () {
+      _streamUiFlushTimer = null;
+      _flushAssistantStream();
+    });
+  }
+
+  void _flushAssistantStream() {
+    if (!mounted || _messages.isEmpty) return;
+    setState(() {
+      _messages[_messages.length - 1] = ChatMessage(
+        text: _cleanModelOutput(_streamedAssistantText),
+        isUser: false,
+      );
+    });
+    _scrollToBottom();
   }
 
   void _scrollToBottom() {
@@ -239,7 +319,10 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             // Custom Top Navbar
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 8.0,
+              ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -247,7 +330,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
                         decoration: BoxDecoration(
                           border: Border.all(color: Colors.grey.shade300),
                           borderRadius: BorderRadius.circular(16),
@@ -290,7 +376,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ),
             ),
-            
+
             Expanded(
               child: _messages.isEmpty
                   ? Center(
@@ -333,71 +419,92 @@ class _ChatScreenState extends State<ChatScreen> {
                           message: _messages[index],
                           themeColor: _themeColor,
                           elapsedLabel: isStreamingBubble
-                              ? _formatElapsed(_generationSeconds)
+                              ? _generationStatusLabel()
                               : null,
+                          isStreaming: isStreamingBubble,
                           isSpeaking: _speakingIndex == index,
-                          onSpeak: () => _toggleSpeak(
-                            index,
-                            _messages[index].text,
-                          ),
+                          onSpeak: () =>
+                              _toggleSpeak(index, _messages[index].text),
                         );
                       },
                     ),
             ),
-            
+
             // Input Area
-            Container(
-              margin: const EdgeInsets.all(16),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Colors.black12,
-                    blurRadius: 10,
-                    offset: Offset(0, 4),
-                  ),
-                ],
-              ),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _focusInput,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  TextField(
-                    controller: _controller,
-                    minLines: 1,
-                    maxLines: 5,
-                    decoration: const InputDecoration.collapsed(
-                      hintText: 'How can Tiny Aya help you today ?',
-                      hintStyle: TextStyle(color: Colors.grey),
+                  Container(
+                    margin: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
                     ),
-                    enabled: !_isGenerating,
-                    onSubmitted: (_) => _sendMessage(),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const SizedBox.shrink(),
-                      CircleAvatar(
-                        backgroundColor: _themeColor.withAlpha(_isGenerating ? 128 : 255),
-                        radius: 16,
-                        child: IconButton(
-                          padding: EdgeInsets.zero,
-                          icon: _isGenerating
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Icon(Icons.arrow_upward, size: 16, color: Colors.white),
-                          onPressed: _isGenerating ? null : _sendMessage,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Colors.black12,
+                          blurRadius: 10,
+                          offset: Offset(0, 4),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TextField(
+                          controller: _controller,
+                          focusNode: _inputFocusNode,
+                          minLines: 1,
+                          maxLines: 5,
+                          keyboardType: TextInputType.multiline,
+                          textInputAction: TextInputAction.send,
+                          decoration: const InputDecoration.collapsed(
+                            hintText: 'How can Tiny Aya help you today ?',
+                            hintStyle: TextStyle(color: Colors.grey),
+                          ),
+                          enabled: !_isGenerating,
+                          onTap: _focusInput,
+                          onSubmitted: (_) => _sendMessage(),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const SizedBox.shrink(),
+                            CircleAvatar(
+                              backgroundColor: _themeColor.withAlpha(
+                                _isGenerating ? 128 : 255,
+                              ),
+                              radius: 16,
+                              child: IconButton(
+                                padding: EdgeInsets.zero,
+                                icon: _isGenerating
+                                    ? const SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        Icons.arrow_upward,
+                                        size: 16,
+                                        color: Colors.white,
+                                      ),
+                                onPressed: _isGenerating ? null : _sendMessage,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -414,7 +521,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _chatSub = null;
     _generationTimer?.cancel();
     _generationTimer = null;
+    _streamUiFlushTimer?.cancel();
+    _streamUiFlushTimer = null;
     unawaited(_tts.stop());
+    _inputFocusNode.dispose();
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -460,18 +570,13 @@ class _ModelRequiredState extends StatelessWidget {
                   const SizedBox(height: 16),
                   Text(
                     title,
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 10),
                   Text(
                     subtitle,
-                    style: TextStyle(
-                      color: Colors.grey.shade700,
-                    ),
+                    style: TextStyle(color: Colors.grey.shade700),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 20),
@@ -494,6 +599,7 @@ class _MessageBubble extends StatelessWidget {
   final ChatMessage message;
   final Color themeColor;
   final String? elapsedLabel;
+  final bool isStreaming;
   final bool isSpeaking;
   final VoidCallback? onSpeak;
 
@@ -501,6 +607,7 @@ class _MessageBubble extends StatelessWidget {
     required this.message,
     required this.themeColor,
     this.elapsedLabel,
+    this.isStreaming = false,
     this.isSpeaking = false,
     this.onSpeak,
   });
@@ -513,19 +620,13 @@ class _MessageBubble extends StatelessWidget {
         const SizedBox(
           width: 22,
           height: 22,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: Colors.grey,
-          ),
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.grey),
         ),
         if (elapsedLabel != null) ...[
           const SizedBox(height: 8),
           Text(
             'Generating… $elapsedLabel',
-            style: TextStyle(
-              color: Colors.grey.shade600,
-              fontSize: 12,
-            ),
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
           ),
         ],
       ],
@@ -533,45 +634,35 @@ class _MessageBubble extends StatelessWidget {
   }
 
   Widget _assistantContent(Color textColor) {
+    final textStyle = TextStyle(color: textColor, height: 1.4, fontSize: 15);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        MarkdownBody(
-          data: message.text,
-          styleSheet: MarkdownStyleSheet(
-            p: TextStyle(
-              color: textColor,
-              height: 1.4,
-              fontSize: 15,
+        if (isStreaming)
+          Text(message.text, style: textStyle)
+        else
+          MarkdownBody(
+            data: message.text,
+            styleSheet: MarkdownStyleSheet(
+              p: textStyle,
+              strong: textStyle.copyWith(fontWeight: FontWeight.bold),
+              listBullet: TextStyle(color: textColor, fontSize: 15),
+              code: TextStyle(
+                color: textColor,
+                fontSize: 13,
+                backgroundColor: Colors.grey.shade200,
+              ),
+              blockSpacing: 8,
             ),
-            strong: TextStyle(
-              color: textColor,
-              height: 1.4,
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-            ),
-            listBullet: TextStyle(
-              color: textColor,
-              fontSize: 15,
-            ),
-            code: TextStyle(
-              color: textColor,
-              fontSize: 13,
-              backgroundColor: Colors.grey.shade200,
-            ),
-            blockSpacing: 8,
           ),
-        ),
         if (elapsedLabel != null)
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(
               '· $elapsedLabel',
-              style: TextStyle(
-                color: Colors.grey.shade500,
-                fontSize: 11,
-              ),
+              style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
             ),
           ),
       ],
@@ -581,7 +672,9 @@ class _MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = message.isUser;
-    final alignment = isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+    final alignment = isUser
+        ? CrossAxisAlignment.end
+        : CrossAxisAlignment.start;
     final bubbleColor = isUser ? themeColor : Colors.transparent;
     final textColor = isUser ? Colors.white : Colors.black87;
 
@@ -609,15 +702,15 @@ class _MessageBubble extends StatelessWidget {
             child: message.isLoading
                 ? _loadingContent()
                 : isUser
-                    ? Text(
-                        message.text,
-                        style: TextStyle(
-                          color: textColor,
-                          height: 1.4,
-                          fontSize: 15,
-                        ),
-                      )
-                    : _assistantContent(textColor),
+                ? Text(
+                    message.text,
+                    style: TextStyle(
+                      color: textColor,
+                      height: 1.4,
+                      fontSize: 15,
+                    ),
+                  )
+                : _assistantContent(textColor),
           ),
           if (!isUser && !message.isLoading && message.text.trim().isNotEmpty)
             Padding(
@@ -630,7 +723,9 @@ class _MessageBubble extends StatelessWidget {
                     InkWell(
                       onTap: onSpeak,
                       child: Icon(
-                        isSpeaking ? Icons.stop_circle : Icons.volume_up_outlined,
+                        isSpeaking
+                            ? Icons.stop_circle
+                            : Icons.volume_up_outlined,
                         size: 20,
                         color: Colors.grey,
                       ),

@@ -1,4 +1,4 @@
-package com.inl.aya_flutter
+package com.reubencf.tinyaya
 
 import android.os.StatFs
 import io.flutter.embedding.engine.FlutterEngine

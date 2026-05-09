@@ -10,6 +10,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
 
+# Android 15+ devices may use 16 KB memory pages. Make every shared
+# library built by this CMake tree use 16 KB-compatible ELF segment
+# alignment, including the llama.cpp sub-build below.
+set(ANDROID_16KB_PAGE_FLAGS "-Wl,-z,max-page-size=16384")
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${ANDROID_16KB_PAGE_FLAGS}")
+set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} ${ANDROID_16KB_PAGE_FLAGS}")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${ANDROID_16KB_PAGE_FLAGS}")
+
 # Find required packages
 find_library(log-lib log)
 find_library(android-lib android)

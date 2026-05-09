@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'app/aya_session_controller.dart';
@@ -10,6 +11,35 @@ import 'translate/translate_screen.dart';
 
 void main() {
   ErrorWidget.builder = (FlutterErrorDetails details) {
+    if (kReleaseMode) {
+      return Container(
+        color: const Color(0xFFF4F1EA),
+        padding: const EdgeInsets.all(24),
+        alignment: Alignment.center,
+        child: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, size: 48, color: Color(0xFF0F766E)),
+            SizedBox(height: 16),
+            Text(
+              'Something went wrong',
+              style: TextStyle(
+                color: Colors.black87,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Please restart the app and try again.',
+              style: TextStyle(color: Colors.black54, fontSize: 14),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
     return Container(
       color: const Color(0xFFFFE4E1),
       padding: const EdgeInsets.all(24),

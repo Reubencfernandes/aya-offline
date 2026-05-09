@@ -87,6 +87,23 @@ class InsufficientStorageException implements Exception {
   String toString() => userMessage;
 }
 
+class InvalidModelDownloadException implements Exception {
+  const InvalidModelDownloadException({
+    required this.model,
+    required this.reason,
+  });
+
+  final AyaModel model;
+  final String reason;
+
+  String get userMessage =>
+      'Downloaded ${model.displayName} ${model.quant} is invalid: $reason. '
+      'Please try the download again.';
+
+  @override
+  String toString() => userMessage;
+}
+
 /// Manages downloading and storing GGUF models on the device.
 class ModelManager {
   @visibleForTesting
@@ -121,7 +138,7 @@ class ModelManager {
   /// Check if a model is already downloaded.
   static Future<bool> isDownloaded(AyaModel model) async {
     final path = await modelPath(model);
-    return File(path).exists();
+    return _isReadableGguf(File(path));
   }
 
   static Future<ModelDownloadCheck> checkDownloadReadiness(
@@ -132,7 +149,7 @@ class ModelManager {
     final finalFile = File(path);
     final partialFile = File(await _partialModelPath(model));
 
-    if (await finalFile.exists()) {
+    if (await finalFile.exists() && await _isReadableGguf(finalFile)) {
       return ModelDownloadCheck(
         availableBytes: await StorageSpaceService.availableBytesForPath(
           dir.path,
@@ -142,6 +159,9 @@ class ModelManager {
         requiredBytesWithHeadroom: 0,
         canProceed: true,
       );
+    }
+    if (await finalFile.exists()) {
+      await _deleteQuietly(finalFile);
     }
 
     final estimatedTotalBytes = model.sizeMB * 1024 * 1024;
@@ -175,12 +195,16 @@ class ModelManager {
       return [];
     }
 
-    return dir
-        .listSync()
-        .whereType<File>()
-        .where((file) => file.path.endsWith('.gguf'))
-        .map((file) => file.uri.pathSegments.last)
-        .toList();
+    final files = <String>[];
+    await for (final entity in dir.list()) {
+      if (entity is! File || !entity.path.endsWith('.gguf')) {
+        continue;
+      }
+      if (await _isReadableGguf(entity)) {
+        files.add(entity.uri.pathSegments.last);
+      }
+    }
+    return files;
   }
 
   /// Find the first downloaded model (for auto-loading on startup).
@@ -219,9 +243,12 @@ class ModelManager {
 
     final finalPath = await modelPath(model);
     final finalFile = File(finalPath);
-    if (await finalFile.exists()) {
+    if (await finalFile.exists() && await _isReadableGguf(finalFile)) {
       onPhaseChanged?.call(ModelDownloadPhase.completed);
       return finalPath;
+    }
+    if (await finalFile.exists()) {
+      await _deleteQuietly(finalFile);
     }
 
     final partialFile = File(await _partialModelPath(model));
@@ -297,6 +324,11 @@ class ModelManager {
         onStatus?.call('Finalizing model...');
         await _finalizeSink(sink);
         sink = null;
+        await _validateDownloadedModel(
+          partialFile,
+          model: model,
+          expectedBytes: totalBytes,
+        );
 
         if (await finalFile.exists()) {
           await finalFile.delete();
@@ -332,6 +364,11 @@ class ModelManager {
           );
         }
 
+        rethrow;
+      } on InvalidModelDownloadException {
+        await _closeSinkQuietly(sink);
+        sink = null;
+        await _deleteQuietly(partialFile);
         rethrow;
       } catch (error) {
         await _closeSinkQuietly(sink);
@@ -495,6 +532,84 @@ class ModelManager {
 
     try {
       await sink.close();
+    } catch (_) {}
+  }
+
+  static Future<void> _validateDownloadedModel(
+    File file, {
+    required AyaModel model,
+    required int expectedBytes,
+  }) async {
+    if (!await file.exists()) {
+      throw InvalidModelDownloadException(
+        model: model,
+        reason: 'the file was not written to disk',
+      );
+    }
+
+    final actualBytes = await file.length();
+    if (expectedBytes > 0 && actualBytes != expectedBytes) {
+      throw InvalidModelDownloadException(
+        model: model,
+        reason:
+            'expected ${_formatBytes(expectedBytes)}, got '
+            '${_formatBytes(actualBytes)}',
+      );
+    }
+
+    if (!await _isReadableGguf(file)) {
+      throw InvalidModelDownloadException(
+        model: model,
+        reason: 'the file does not start with a GGUF header',
+      );
+    }
+  }
+
+  @visibleForTesting
+  static Future<void> debugValidateDownloadedModel(
+    File file, {
+    required AyaModel model,
+    required int expectedBytes,
+  }) {
+    return _validateDownloadedModel(
+      file,
+      model: model,
+      expectedBytes: expectedBytes,
+    );
+  }
+
+  static Future<bool> _isReadableGguf(File file) async {
+    if (!await file.exists()) {
+      return false;
+    }
+    if (await file.length() < 4) {
+      return false;
+    }
+
+    RandomAccessFile? handle;
+    try {
+      handle = await file.open();
+      final bytes = await handle.read(4);
+      return bytes.length == 4 &&
+          bytes[0] == 0x47 &&
+          bytes[1] == 0x47 &&
+          bytes[2] == 0x55 &&
+          bytes[3] == 0x46;
+    } catch (_) {
+      return false;
+    } finally {
+      final opened = handle;
+      if (opened != null) {
+        await opened.close();
+      }
+    }
+  }
+
+  static Future<void> _deleteQuietly(File file) async {
+    try {
+      if (await file.exists()) {
+        await file.delete();
+      }
     } catch (_) {}
   }
 

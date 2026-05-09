@@ -83,4 +83,32 @@ void main() {
       );
     },
   );
+
+  test('downloaded files only lists readable GGUF files', () async {
+    final validFile = File('${tempDir.path}/${_testModel.fileName}');
+    final invalidFile = File('${tempDir.path}/invalid.gguf');
+    await validFile.writeAsBytes(<int>[0x47, 0x47, 0x55, 0x46, 0, 1, 2, 3]);
+    await invalidFile.writeAsBytes(<int>[1, 2, 3, 4, 5]);
+
+    expect(await ModelManager.isDownloaded(_testModel), isTrue);
+    expect(await ModelManager.downloadedFiles(), contains(_testModel.fileName));
+    expect(
+      await ModelManager.downloadedFiles(),
+      isNot(contains('invalid.gguf')),
+    );
+  });
+
+  test('download validation rejects non-GGUF files', () async {
+    final invalidFile = File('${tempDir.path}/${_testModel.fileName}.part');
+    await invalidFile.writeAsBytes(<int>[1, 2, 3, 4, 5]);
+
+    await expectLater(
+      ModelManager.debugValidateDownloadedModel(
+        invalidFile,
+        model: _testModel,
+        expectedBytes: 5,
+      ),
+      throwsA(isA<InvalidModelDownloadException>()),
+    );
+  });
 }
