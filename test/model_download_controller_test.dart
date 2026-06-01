@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:aya_flutter/app/model_download_controller.dart';
@@ -35,16 +36,20 @@ const _outOfSpaceCheck = ModelDownloadCheck(
 const _ggufHeader = <int>[0x47, 0x47, 0x55, 0x46, 0, 1, 2, 3];
 
 class _FakeBackgroundDownloadClient implements ModelBackgroundDownloadClient {
-  _FakeBackgroundDownloadClient({List<BackgroundModelDownloadRecord>? records})
-    : _records = records ?? [];
+  _FakeBackgroundDownloadClient({
+    List<BackgroundModelDownloadRecord>? records,
+    this.resumeSucceeds = true,
+  }) : _records = records ?? [];
 
   final List<BackgroundModelDownloadRecord> _records;
+  bool resumeSucceeds;
   BackgroundModelStatusCallback? statusCallback;
   BackgroundModelProgressCallback? progressCallback;
   bool didEnqueue = false;
   bool didPause = false;
   bool didResume = false;
   bool didCancel = false;
+  bool didDeleteRecord = false;
   bool disposed = false;
 
   @override
@@ -74,7 +79,7 @@ class _FakeBackgroundDownloadClient implements ModelBackgroundDownloadClient {
   @override
   Future<bool> resume(AyaModel model) async {
     didResume = true;
-    return true;
+    return resumeSucceeds;
   }
 
   @override
@@ -84,7 +89,9 @@ class _FakeBackgroundDownloadClient implements ModelBackgroundDownloadClient {
   }
 
   @override
-  Future<void> deleteRecord(AyaModel model) async {}
+  Future<void> deleteRecord(AyaModel model) async {
+    didDeleteRecord = true;
+  }
 
   @override
   Future<String> filePath(AyaModel model) async => '/tmp/${model.fileName}';
@@ -248,6 +255,7 @@ void main() {
 
   test('restores failed background download state', () async {
     final backgroundClient = _FakeBackgroundDownloadClient(
+      resumeSucceeds: false,
       records: [
         _backgroundRecord(
           BackgroundModelDownloadStatus.failed,
@@ -268,6 +276,102 @@ void main() {
     expect(controller.lastErrorMessage, 'network unavailable');
     expect(controller.isBusy, isTrue);
   });
+
+  test(
+    'restores resumable failed background download without restarting',
+    () async {
+      final backgroundClient = _FakeBackgroundDownloadClient(
+        records: [
+          _backgroundRecord(
+            BackgroundModelDownloadStatus.failed,
+            error: 'network unavailable',
+          ),
+        ],
+      );
+      final controller = ModelDownloadController(
+        downloadedFilesLoader: () async => [],
+        readinessChecker: (_) async => _readyCheck,
+        deleteModel: (_) async {},
+        backgroundDownloadClient: backgroundClient,
+      );
+
+      await controller.initialize();
+
+      expect(backgroundClient.didResume, isTrue);
+      expect(backgroundClient.didDeleteRecord, isFalse);
+      expect(backgroundClient.didEnqueue, isFalse);
+      expect(controller.phase, ModelDownloadPhase.downloading);
+      expect(controller.progress, 0.25);
+      expect(controller.progressText, 'Resuming download...');
+    },
+  );
+
+  test(
+    'retrying failed background download resumes existing task first',
+    () async {
+      final backgroundClient = _FakeBackgroundDownloadClient(
+        resumeSucceeds: false,
+        records: [
+          _backgroundRecord(
+            BackgroundModelDownloadStatus.failed,
+            error: 'network unavailable',
+          ),
+        ],
+      );
+      final controller = ModelDownloadController(
+        downloadedFilesLoader: () async => [],
+        readinessChecker: (_) async => _readyCheck,
+        deleteModel: (_) async {},
+        backgroundDownloadClient: backgroundClient,
+      );
+
+      await controller.initialize();
+      backgroundClient.resumeSucceeds = true;
+      backgroundClient.didResume = false;
+
+      unawaited(controller.resume());
+      await Future<void>.delayed(Duration.zero);
+
+      expect(backgroundClient.didResume, isTrue);
+      expect(backgroundClient.didDeleteRecord, isFalse);
+      expect(backgroundClient.didEnqueue, isFalse);
+      expect(controller.phase, ModelDownloadPhase.downloading);
+    },
+  );
+
+  test(
+    'retrying failed background download restarts only without resume data',
+    () async {
+      final backgroundClient = _FakeBackgroundDownloadClient(
+        resumeSucceeds: false,
+        records: [
+          _backgroundRecord(
+            BackgroundModelDownloadStatus.failed,
+            error: 'network unavailable',
+          ),
+        ],
+      );
+      final controller = ModelDownloadController(
+        downloadedFilesLoader: () async => [],
+        readinessChecker: (_) async => _readyCheck,
+        deleteModel: (_) async {},
+        backgroundDownloadClient: backgroundClient,
+      );
+
+      await controller.initialize();
+      backgroundClient.didResume = false;
+      backgroundClient.didDeleteRecord = false;
+
+      unawaited(controller.resume());
+      await Future<void>.delayed(Duration.zero);
+
+      expect(backgroundClient.didResume, isTrue);
+      expect(backgroundClient.didDeleteRecord, isTrue);
+      expect(backgroundClient.didEnqueue, isTrue);
+      expect(controller.phase, ModelDownloadPhase.downloading);
+      expect(controller.progress, 0);
+    },
+  );
 
   test('restores completed background download state', () async {
     final tempDir = await Directory.systemTemp.createTemp(

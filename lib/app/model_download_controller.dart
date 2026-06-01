@@ -255,20 +255,21 @@ class ModelDownloadController extends ChangeNotifier {
         _phase != ModelDownloadPhase.failed) {
       return null;
     }
-    if (_usesBackgroundDownloads && _phase == ModelDownloadPhase.paused) {
-      _phase = ModelDownloadPhase.downloading;
-      _lastErrorMessage = null;
-      notifyListeners();
-      await _backgroundClient?.resume(model);
-      return _currentDownload;
-    }
     if (_usesBackgroundDownloads) {
+      final resumed = await _resumeBackgroundDownload(model);
+      if (resumed) {
+        return _currentDownload;
+      }
+
       _currentBackgroundCompleter = null;
       _currentDownload = null;
       _phase = ModelDownloadPhase.idle;
       _lastErrorMessage = null;
       notifyListeners();
-      return download(model);
+      final future = _enqueueBackgroundDownload(model);
+      _currentDownload = future;
+      unawaited(future.catchError((_) => ''));
+      return future;
     }
 
     _phase = ModelDownloadPhase.downloading;
@@ -386,6 +387,34 @@ class ModelDownloadController extends ChangeNotifier {
     return completer.future;
   }
 
+  Future<bool> _resumeBackgroundDownload(AyaModel model) async {
+    final client = _backgroundClient;
+    if (client == null) {
+      return false;
+    }
+
+    final completer = _currentBackgroundCompleter ?? Completer<String>();
+    _currentBackgroundCompleter = completer;
+    _currentDownload = completer.future;
+    _downloadingFileName = model.fileName;
+    _downloadingModel = model;
+    _phase = ModelDownloadPhase.downloading;
+    _lastErrorMessage = null;
+    _progressText = 'Resuming download...';
+    notifyListeners();
+
+    final resumed = await client.resume(model);
+    if (resumed) {
+      return true;
+    }
+
+    if (!completer.isCompleted) {
+      _currentBackgroundCompleter = null;
+      _currentDownload = null;
+    }
+    return false;
+  }
+
   void _startDownloadState(AyaModel model) {
     _downloadingFileName = model.fileName;
     _downloadingModel = model;
@@ -431,6 +460,16 @@ class ModelDownloadController extends ChangeNotifier {
       case BackgroundModelDownloadStatus.paused:
         _applyBackgroundRecord(record, ModelDownloadPhase.paused);
       case BackgroundModelDownloadStatus.failed:
+        _applyBackgroundRecord(record, ModelDownloadPhase.failed);
+        final error =
+            record.error ?? 'Download failed. Retry to resume the model.';
+        _lastErrorMessage = error;
+        final resumed = await _resumeBackgroundDownload(record.model);
+        if (!resumed) {
+          _applyBackgroundRecord(record, ModelDownloadPhase.failed);
+          _lastErrorMessage = error;
+          notifyListeners();
+        }
       case BackgroundModelDownloadStatus.notFound:
         _applyBackgroundRecord(record, ModelDownloadPhase.failed);
         _lastErrorMessage =
