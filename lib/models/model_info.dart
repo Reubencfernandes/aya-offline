@@ -20,6 +20,20 @@ class AyaModel {
     required this.downloadUrl,
     required this.sizeMB,
   });
+
+  Uri get huggingFacePageUri {
+    final uri = Uri.parse(downloadUrl);
+    final resolveIndex = uri.pathSegments.indexOf('resolve');
+    if (uri.host != 'huggingface.co' || resolveIndex <= 0) {
+      return uri;
+    }
+
+    return uri.replace(
+      pathSegments: uri.pathSegments.take(resolveIndex),
+      query: null,
+      fragment: null,
+    );
+  }
 }
 
 /// All downloadable Aya model variants.

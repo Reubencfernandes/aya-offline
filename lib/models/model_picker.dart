@@ -1,20 +1,25 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../app/model_download_controller.dart';
 import 'model_info.dart';
 import 'model_manager.dart';
 
+typedef LaunchModelUrl = Future<bool> Function(Uri uri);
+
 /// Screen for browsing, downloading, and selecting Aya model variants.
 class ModelPickerScreen extends StatefulWidget {
   final ModelDownloadController downloadController;
   final FutureOr<void> Function(AyaModel model)? onModelDeleted;
+  final LaunchModelUrl? launchModelUrl;
 
   const ModelPickerScreen({
     super.key,
     required this.downloadController,
     this.onModelDeleted,
+    this.launchModelUrl,
   });
 
   @override
@@ -53,6 +58,20 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
   Future<void> _deleteModel(AyaModel model) async {
     await widget.downloadController.deleteModel(model);
     await widget.onModelDeleted?.call(model);
+  }
+
+  Future<void> _viewModel(AyaModel model) async {
+    final launcher = widget.launchModelUrl ?? _launchExternalUrl;
+    final opened = await launcher(model.huggingFacePageUri);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open ${model.huggingFacePageUri}')),
+      );
+    }
+  }
+
+  static Future<bool> _launchExternalUrl(Uri uri) {
+    return launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   Future<String> modelPath(AyaModel model) => ModelManager.modelPath(model);
@@ -94,8 +113,8 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
                       Expanded(
                         child: Text(
                           widget.downloadController.isFinalizing
-                              ? 'The file is downloaded. Keep the app open while the model is finalized and activated.'
-                              : 'Download keeps running if you leave this screen, but keep the app open until it finishes.',
+                              ? 'The file is downloaded and the model is being finalized.'
+                              : 'Download continues in the background if you leave this screen or reopen the app later.',
                           style: Theme.of(context).textTheme.bodyMedium,
                         ),
                       ),
@@ -110,6 +129,7 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
                     controller: widget.downloadController,
                     models: families[family]!,
                     onDownload: _download,
+                    onViewModel: _viewModel,
                     onSelect: _selectModel,
                     onDelete: _deleteModel,
                   ),
@@ -125,6 +145,7 @@ class _FamilyCard extends StatelessWidget {
   final ModelDownloadController controller;
   final List<AyaModel> models;
   final void Function(AyaModel) onDownload;
+  final void Function(AyaModel) onViewModel;
   final void Function(AyaModel) onSelect;
   final void Function(AyaModel) onDelete;
 
@@ -132,6 +153,7 @@ class _FamilyCard extends StatelessWidget {
     required this.controller,
     required this.models,
     required this.onDownload,
+    required this.onViewModel,
     required this.onSelect,
     required this.onDelete,
   });
@@ -224,7 +246,9 @@ class _FamilyCard extends StatelessWidget {
                     themeColor: themeColor,
                   )
                 else if (isDownloaded)
-                  Row(
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
                     children: [
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
@@ -241,11 +265,27 @@ class _FamilyCard extends StatelessWidget {
                         onPressed: () => onSelect(model),
                         child: const Text('Use Model'),
                       ),
-                      const Spacer(),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: themeColor,
+                          side: BorderSide(color: themeColor.withAlpha(120)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        onPressed: () => onViewModel(model),
+                        icon: const Icon(Icons.open_in_new, size: 18),
+                        label: const Text('View Model'),
+                      ),
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red[50],
-                          foregroundColor: Colors.red,
+                          backgroundColor: Colors.red.shade600,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
                           padding: const EdgeInsets.symmetric(
                             horizontal: 16,
                             vertical: 8,
@@ -261,33 +301,52 @@ class _FamilyCard extends StatelessWidget {
                     ],
                   )
                 else
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: themeColor,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: themeColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                        onPressed: hasInsufficientSpace
+                            ? null
+                            : () => onDownload(model),
+                        icon: Icon(
+                          hasInsufficientSpace ? Icons.storage : Icons.download,
+                          size: 18,
+                        ),
+                        label: Text(
+                          hasInsufficientSpace
+                              ? 'Not enough storage'
+                              : 'Download',
                         ),
                       ),
-                      onPressed: hasInsufficientSpace
-                          ? null
-                          : () => onDownload(model),
-                      icon: Icon(
-                        hasInsufficientSpace ? Icons.storage : Icons.download,
-                        size: 18,
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: themeColor,
+                          side: BorderSide(color: themeColor.withAlpha(120)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        onPressed: () => onViewModel(model),
+                        icon: const Icon(Icons.open_in_new, size: 18),
+                        label: const Text('View Model'),
                       ),
-                      label: Text(
-                        hasInsufficientSpace
-                            ? 'Not enough storage'
-                            : 'Download',
-                      ),
-                    ),
+                    ],
                   ),
               ],
             ),

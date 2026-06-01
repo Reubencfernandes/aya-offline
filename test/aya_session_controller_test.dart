@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:aya_flutter/app/aya_session_controller.dart';
 import 'package:aya_flutter/engine/engine.dart';
 import 'package:aya_flutter/models/model_info.dart';
+import 'package:aya_flutter/models/model_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeEngine extends AyaEngine {
@@ -25,6 +28,20 @@ class _FakeEngine extends AyaEngine {
 }
 
 void main() {
+  late Directory tempDir;
+
+  setUp(() async {
+    tempDir = await Directory.systemTemp.createTemp('aya-session-test');
+    ModelManager.debugModelsDirProvider = () async => tempDir;
+  });
+
+  tearDown(() async {
+    ModelManager.debugReset();
+    if (await tempDir.exists()) {
+      await tempDir.delete(recursive: true);
+    }
+  });
+
   test(
     'clears loaded model when the active downloaded model is deleted',
     () async {
@@ -69,6 +86,54 @@ void main() {
       expect(controller.isReady, isTrue);
       expect(controller.modelPath, activePath);
       expect(controller.selectedModel, activeModel);
+    },
+  );
+
+  test('initializes the last active downloaded model first', () async {
+    final engine = _FakeEngine();
+    final controller = AyaSessionController(engine: engine);
+    final firstModel = ayaModels.first;
+    final activeModel = ayaModels.firstWhere(
+      (model) => model.fileName != firstModel.fileName,
+    );
+    final activePath = '${tempDir.path}/${activeModel.fileName}';
+
+    await File(
+      '${tempDir.path}/${firstModel.fileName}',
+    ).writeAsBytes(const <int>[0x47, 0x47, 0x55, 0x46, 0, 1, 2, 3]);
+    await File(
+      activePath,
+    ).writeAsBytes(const <int>[0x47, 0x47, 0x55, 0x46, 0, 1, 2, 3]);
+    await ModelManager.saveActiveModel(activeModel);
+
+    await controller.initialize();
+
+    expect(engine.loadedPaths, [activePath]);
+    expect(controller.selectedModel, activeModel);
+    expect(controller.isReady, isTrue);
+  });
+
+  test(
+    'falls back to the first downloaded model when saved active is missing',
+    () async {
+      final engine = _FakeEngine();
+      final controller = AyaSessionController(engine: engine);
+      final firstModel = ayaModels.first;
+      final missingActiveModel = ayaModels.firstWhere(
+        (model) => model.fileName != firstModel.fileName,
+      );
+      final firstPath = '${tempDir.path}/${firstModel.fileName}';
+
+      await File(
+        firstPath,
+      ).writeAsBytes(const <int>[0x47, 0x47, 0x55, 0x46, 0, 1, 2, 3]);
+      await ModelManager.saveActiveModel(missingActiveModel);
+
+      await controller.initialize();
+
+      expect(engine.loadedPaths, [firstPath]);
+      expect(controller.selectedModel, firstModel);
+      expect(controller.isReady, isTrue);
     },
   );
 }

@@ -30,6 +30,8 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Aya uses the microphone so you can dictate text for translation.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Aya uses your photo library only when you choose an image to include with an AI prompt.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Aya uses speech recognition to turn your voice into text for translation.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

@@ -15,6 +15,8 @@ const _testModel = AyaModel(
   sizeMB: 10,
 );
 
+const _ggufHeader = <int>[0x47, 0x47, 0x55, 0x46, 0, 1, 2, 3];
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -96,6 +98,39 @@ void main() {
       await ModelManager.downloadedFiles(),
       isNot(contains('invalid.gguf')),
     );
+  });
+
+  test('persists and restores an active downloaded model', () async {
+    final model = ayaModels.first;
+    final modelFile = File('${tempDir.path}/${model.fileName}');
+    await modelFile.writeAsBytes(_ggufHeader);
+
+    await ModelManager.saveActiveModel(model);
+
+    expect(await ModelManager.activeDownloadedModel(), model);
+  });
+
+  test('clears active model marker when the saved file is missing', () async {
+    final model = ayaModels.first;
+
+    await ModelManager.saveActiveModel(model);
+
+    expect(await ModelManager.activeDownloadedModel(), isNull);
+
+    final markerFile = File('${tempDir.path}/active_model.txt');
+    expect(await markerFile.exists(), isFalse);
+  });
+
+  test('deleting the active model clears its marker', () async {
+    final model = ayaModels.first;
+    final modelFile = File('${tempDir.path}/${model.fileName}');
+    await modelFile.writeAsBytes(_ggufHeader);
+    await ModelManager.saveActiveModel(model);
+
+    await ModelManager.delete(model);
+
+    expect(await modelFile.exists(), isFalse);
+    expect(await ModelManager.activeDownloadedModel(), isNull);
   });
 
   test('download validation rejects non-GGUF files', () async {

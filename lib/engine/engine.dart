@@ -35,7 +35,7 @@ class AyaEngine {
     for (final config in attempts) {
       final success = await _llama.loadModel(config);
       if (success) {
-        final warmupError = await _warmupError();
+        final warmupError = await _warmupError(config);
         if (warmupError == null) {
           _loaded = true;
           return;
@@ -129,18 +129,18 @@ class AyaEngine {
       LlamaConfig(
         modelPath: modelPath,
         nThreads: threads,
-        nGpuLayers: 99, // offload as many layers as the GPU can handle
-        contextSize: 1024,
-        batchSize: 512,
-        useGpu: true,
+        nGpuLayers: 0,
+        contextSize: 768,
+        batchSize: 256,
+        useGpu: false,
         verbose: false,
       ),
       LlamaConfig(
         modelPath: modelPath,
         nThreads: threads,
         nGpuLayers: 0,
-        contextSize: 1024,
-        batchSize: 512,
+        contextSize: 512,
+        batchSize: 128,
         useGpu: false,
         verbose: false,
       ),
@@ -152,8 +152,8 @@ class AyaEngine {
     return '$backend, context ${config.contextSize}, batch ${config.batchSize}';
   }
 
-  Future<String?> _warmupError() async {
-    if (!Platform.isIOS) {
+  Future<String?> _warmupError(LlamaConfig config) async {
+    if (!Platform.isIOS && !(Platform.isAndroid && config.useGpu)) {
       return null;
     }
 
@@ -188,10 +188,13 @@ class AyaEngine {
     double topP = 0.95,
     int topK = 40,
   }) {
-    final effectiveHistory = Platform.isIOS && history.length > 2
+    final trimHistory =
+        (Platform.isIOS || Platform.isAndroid) && history.length > 2;
+    final effectiveHistory = trimHistory
         ? history.sublist(history.length - 2)
         : history;
-    final effectiveMaxTokens = Platform.isIOS
+    final capChatTokens = Platform.isIOS || Platform.isAndroid;
+    final effectiveMaxTokens = capChatTokens
         ? maxTokens.clamp(1, 96).toInt()
         : maxTokens;
 
@@ -202,8 +205,8 @@ class AyaEngine {
       ],
       maxTokens: effectiveMaxTokens,
       temperature: temperature,
-      topP: Platform.isIOS ? topP.clamp(0.1, 0.9).toDouble() : topP,
-      topK: Platform.isIOS ? topK.clamp(1, 20).toInt() : topK,
+      topP: capChatTokens ? topP.clamp(0.1, 0.9).toDouble() : topP,
+      topK: capChatTokens ? topK.clamp(1, 20).toInt() : topK,
     );
   }
 
@@ -226,7 +229,7 @@ class AyaEngine {
   }
 
   int _translationMaxTokens(String text) {
-    if (!Platform.isIOS) {
+    if (!Platform.isIOS && !Platform.isAndroid) {
       return 512;
     }
 
@@ -234,7 +237,8 @@ class AyaEngine {
     final wordEstimate = RegExp(r'\S+').allMatches(trimmed).length;
     final charEstimate = (trimmed.runes.length / 4).ceil();
     final sourceUnits = wordEstimate > 1 ? wordEstimate : charEstimate;
-    return (sourceUnits * 3 + 48).clamp(96, 512).toInt();
+    final platformCap = Platform.isAndroid ? 256 : 512;
+    return (sourceUnits * 3 + 48).clamp(96, platformCap).toInt();
   }
 
   Stream<String> _generateFromTurns(

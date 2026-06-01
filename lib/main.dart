@@ -2,14 +2,19 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'app/aya_session_controller.dart';
 import 'app/model_download_controller.dart';
 import 'chat/chat_screen.dart';
 import 'models/model_picker.dart';
 import 'translate/translate_screen.dart';
+import 'translate/translation_history_store.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
   ErrorWidget.builder = (FlutterErrorDetails details) {
     if (kReleaseMode) {
       return Container(
@@ -94,27 +99,28 @@ class AyaHomeShell extends StatefulWidget {
     super.key,
     this.sessionController,
     this.downloadController,
+    this.translationHistoryStore,
   });
 
   final AyaSessionController? sessionController;
   final ModelDownloadController? downloadController;
+  final TranslationHistoryStore? translationHistoryStore;
 
   @override
   State<AyaHomeShell> createState() => _AyaHomeShellState();
 }
 
-class _AyaHomeShellState extends State<AyaHomeShell>
-    with SingleTickerProviderStateMixin {
+class _AyaHomeShellState extends State<AyaHomeShell> {
   late final AyaSessionController _session;
   late final ModelDownloadController _downloads;
-  late final AnimationController _tabTransitionController;
+  late final TranslationHistoryStore _translationHistoryStore;
   late final bool _ownsSession;
   late final bool _ownsDownloads;
   int _selectedIndex = 0;
-  int? _previousIndex;
-  int _tabDirection = 1;
   int _lastHandledDownloadVersion = 0;
   bool _isSettingsOpen = false;
+  bool _hasTranslationHistory = false;
+  bool _historyPresenceLoaded = false;
 
   bool _didAutoOpenSettings = false;
 
@@ -125,19 +131,43 @@ class _AyaHomeShellState extends State<AyaHomeShell>
     _ownsDownloads = widget.downloadController == null;
     _session = widget.sessionController ?? AyaSessionController();
     _downloads = widget.downloadController ?? ModelDownloadController();
-    _tabTransitionController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 280),
-    )..value = 1;
+    _translationHistoryStore =
+        widget.translationHistoryStore ?? FileTranslationHistoryStore();
     _session.initialize();
     _downloads.initialize();
     _downloads.addListener(_handleDownloadStateChanged);
     _session.addListener(_handleSessionStateChanged);
+    unawaited(_loadTranslationHistoryPresence());
+  }
+
+  Future<void> _loadTranslationHistoryPresence() async {
+    final hasHistory = await _translationHistoryStore.hasHistory();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _hasTranslationHistory = hasHistory;
+      _historyPresenceLoaded = true;
+    });
+    _handleSessionStateChanged();
+  }
+
+  void _handleTranslationHistoryPresenceChanged(bool hasHistory) {
+    if (_hasTranslationHistory == hasHistory && _historyPresenceLoaded) {
+      return;
+    }
+    setState(() {
+      _hasTranslationHistory = hasHistory;
+      _historyPresenceLoaded = true;
+    });
   }
 
   void _handleSessionStateChanged() {
     if (!_session.isChecking &&
-        !_session.isReady &&
+        !_session.isModelLoading &&
+        !_session.hasModel &&
+        _historyPresenceLoaded &&
+        !_hasTranslationHistory &&
         !_downloads.isBusy &&
         !_didAutoOpenSettings &&
         !_isSettingsOpen &&
@@ -196,11 +226,8 @@ class _AyaHomeShellState extends State<AyaHomeShell>
     }
 
     setState(() {
-      _previousIndex = _selectedIndex;
-      _tabDirection = index > _selectedIndex ? 1 : -1;
       _selectedIndex = index;
     });
-    _tabTransitionController.forward(from: 0);
   }
 
   @override
@@ -211,7 +238,9 @@ class _AyaHomeShellState extends State<AyaHomeShell>
         if (_downloads.isBusy) {
           return Scaffold(
             backgroundColor: Colors.white,
-            body: Center(child: _FullScreenDownload(downloads: _downloads)),
+            body: SafeArea(
+              child: Center(child: _FullScreenDownload(downloads: _downloads)),
+            ),
           );
         }
 
@@ -224,17 +253,17 @@ class _AyaHomeShellState extends State<AyaHomeShell>
                   onDismiss: _downloads.clearLastError,
                 ),
               Expanded(
-                child: _AnimatedTabStack(
+                child: IndexedStack(
                   index: _selectedIndex,
-                  previousIndex: _previousIndex,
-                  direction: _tabDirection,
-                  animation: _tabTransitionController,
                   children: [
                     TranslateScreen(
                       key: ValueKey('translate-${_session.modelPath}'),
                       controller: _session,
                       onOpenSettings: _openModelSettings,
                       onSwitchToChat: () => _switchToTab(1),
+                      historyStore: _translationHistoryStore,
+                      onHistoryPresenceChanged:
+                          _handleTranslationHistoryPresenceChanged,
                     ),
                     ChatScreen(
                       key: ValueKey('chat-${_session.modelPath}'),
@@ -256,7 +285,6 @@ class _AyaHomeShellState extends State<AyaHomeShell>
   void dispose() {
     _downloads.removeListener(_handleDownloadStateChanged);
     _session.removeListener(_handleSessionStateChanged);
-    _tabTransitionController.dispose();
     if (_ownsDownloads) {
       _downloads.dispose();
     }
@@ -264,90 +292,6 @@ class _AyaHomeShellState extends State<AyaHomeShell>
       _session.dispose();
     }
     super.dispose();
-  }
-}
-
-class _AnimatedTabStack extends StatelessWidget {
-  final int index;
-  final int? previousIndex;
-  final int direction;
-  final Animation<double> animation;
-  final List<Widget> children;
-
-  const _AnimatedTabStack({
-    required this.index,
-    required this.previousIndex,
-    required this.direction,
-    required this.animation,
-    required this.children,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final reduceMotion =
-        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
-    if (reduceMotion) {
-      return IndexedStack(index: index, children: children);
-    }
-
-    final curved = CurvedAnimation(
-      parent: animation,
-      curve: Curves.easeOutCubic,
-      reverseCurve: Curves.easeOutCubic,
-    );
-
-    return AnimatedBuilder(
-      animation: curved,
-      builder: (context, _) {
-        final isTransitioning =
-            previousIndex != null &&
-            previousIndex != index &&
-            animation.value < 1;
-        final value = curved.value;
-
-        return Stack(
-          fit: StackFit.expand,
-          children: List.generate(children.length, (childIndex) {
-            final isCurrent = childIndex == index;
-            final isPrevious = isTransitioning && childIndex == previousIndex;
-
-            if (!isCurrent && !isPrevious) {
-              return Offstage(
-                offstage: true,
-                child: TickerMode(enabled: false, child: children[childIndex]),
-              );
-            }
-
-            var offset = Offset.zero;
-            var opacity = 1.0;
-            if (isTransitioning && isCurrent) {
-              offset = Offset(direction * (1 - value) * 0.08, 0);
-              opacity = 0.72 + (0.28 * value);
-            } else if (isPrevious) {
-              offset = Offset(-direction * value * 0.04, 0);
-              opacity = 1 - (0.18 * value);
-            }
-
-            return Offstage(
-              offstage: false,
-              child: TickerMode(
-                enabled: isCurrent,
-                child: IgnorePointer(
-                  ignoring: !isCurrent,
-                  child: Opacity(
-                    opacity: opacity,
-                    child: FractionalTranslation(
-                      translation: offset,
-                      child: children[childIndex],
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }),
-        );
-      },
-    );
   }
 }
 

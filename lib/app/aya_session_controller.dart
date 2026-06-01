@@ -42,7 +42,9 @@ class AyaSessionController extends ChangeNotifier {
     _status = 'Checking for downloaded models...';
     notifyListeners();
 
-    final model = await ModelManager.firstDownloaded();
+    final model =
+        await ModelManager.activeDownloadedModel() ??
+        await ModelManager.firstDownloaded();
     if (model == null) {
       _modelPath = null;
       _selectedModel = null;
@@ -68,6 +70,10 @@ class AyaSessionController extends ChangeNotifier {
       await _engine.dispose();
       await _engine.load(path);
       _status = 'Ready';
+      final selectedModel = _selectedModel;
+      if (selectedModel != null) {
+        await ModelManager.saveActiveModel(selectedModel);
+      }
     } catch (error) {
       _status = 'Failed to load model: $error';
     } finally {
@@ -85,6 +91,7 @@ class AyaSessionController extends ChangeNotifier {
     }
 
     await _engine.dispose().catchError((Object _) {});
+    await ModelManager.clearActiveModel();
     _modelPath = null;
     _selectedModel = null;
     _isChecking = false;

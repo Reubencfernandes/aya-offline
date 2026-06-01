@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:aya_flutter/app/model_download_controller.dart';
+import 'package:aya_flutter/models/background_model_downloader.dart';
 import 'package:aya_flutter/models/model_info.dart';
 import 'package:aya_flutter/models/model_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -28,6 +31,86 @@ const _outOfSpaceCheck = ModelDownloadCheck(
   requiredBytesWithHeadroom: (2 * 1024 * 1024) + (256 * 1024 * 1024),
   canProceed: false,
 );
+
+const _ggufHeader = <int>[0x47, 0x47, 0x55, 0x46, 0, 1, 2, 3];
+
+class _FakeBackgroundDownloadClient implements ModelBackgroundDownloadClient {
+  _FakeBackgroundDownloadClient({List<BackgroundModelDownloadRecord>? records})
+    : _records = records ?? [];
+
+  final List<BackgroundModelDownloadRecord> _records;
+  BackgroundModelStatusCallback? statusCallback;
+  BackgroundModelProgressCallback? progressCallback;
+  bool didEnqueue = false;
+  bool didPause = false;
+  bool didResume = false;
+  bool didCancel = false;
+  bool disposed = false;
+
+  @override
+  Future<void> initialize({
+    required BackgroundModelStatusCallback onStatus,
+    required BackgroundModelProgressCallback onProgress,
+  }) async {
+    statusCallback = onStatus;
+    progressCallback = onProgress;
+  }
+
+  @override
+  Future<List<BackgroundModelDownloadRecord>> records() async => _records;
+
+  @override
+  Future<bool> enqueue(AyaModel model) async {
+    didEnqueue = true;
+    return true;
+  }
+
+  @override
+  Future<bool> pause(AyaModel model) async {
+    didPause = true;
+    return true;
+  }
+
+  @override
+  Future<bool> resume(AyaModel model) async {
+    didResume = true;
+    return true;
+  }
+
+  @override
+  Future<bool> cancel(AyaModel model) async {
+    didCancel = true;
+    return true;
+  }
+
+  @override
+  Future<void> deleteRecord(AyaModel model) async {}
+
+  @override
+  Future<String> filePath(AyaModel model) async => '/tmp/${model.fileName}';
+
+  @override
+  void dispose() {
+    disposed = true;
+  }
+}
+
+BackgroundModelDownloadRecord _backgroundRecord(
+  BackgroundModelDownloadStatus status, {
+  double progress = 0.25,
+  int expectedFileSize = 10 * 1024 * 1024,
+  String? error,
+}) {
+  return BackgroundModelDownloadRecord(
+    model: _testModel,
+    status: status,
+    progress: progress,
+    expectedFileSize: expectedFileSize,
+    retriesRemaining: 6,
+    maxRetries: 7,
+    error: error,
+  );
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -122,4 +205,106 @@ void main() {
       expect(controller.downloaded.contains(_testModel.fileName), isFalse);
     },
   );
+
+  test('restores active background download state', () async {
+    final backgroundClient = _FakeBackgroundDownloadClient(
+      records: [_backgroundRecord(BackgroundModelDownloadStatus.running)],
+    );
+    final controller = ModelDownloadController(
+      downloadedFilesLoader: () async => [],
+      readinessChecker: (_) async => _readyCheck,
+      deleteModel: (_) async {},
+      backgroundDownloadClient: backgroundClient,
+    );
+
+    await controller.initialize();
+
+    expect(controller.phase, ModelDownloadPhase.downloading);
+    expect(controller.downloadingFileName, _testModel.fileName);
+    expect(controller.progress, 0.25);
+    expect(controller.receivedBytes, 2621440);
+    expect(controller.totalBytes, 10 * 1024 * 1024);
+    expect(controller.retryMax, 8);
+    expect(controller.isBusy, isTrue);
+  });
+
+  test('restores paused background download state', () async {
+    final backgroundClient = _FakeBackgroundDownloadClient(
+      records: [_backgroundRecord(BackgroundModelDownloadStatus.paused)],
+    );
+    final controller = ModelDownloadController(
+      downloadedFilesLoader: () async => [],
+      readinessChecker: (_) async => _readyCheck,
+      deleteModel: (_) async {},
+      backgroundDownloadClient: backgroundClient,
+    );
+
+    await controller.initialize();
+
+    expect(controller.phase, ModelDownloadPhase.paused);
+    expect(controller.isPaused, isTrue);
+    expect(controller.downloadingModel, _testModel);
+  });
+
+  test('restores failed background download state', () async {
+    final backgroundClient = _FakeBackgroundDownloadClient(
+      records: [
+        _backgroundRecord(
+          BackgroundModelDownloadStatus.failed,
+          error: 'network unavailable',
+        ),
+      ],
+    );
+    final controller = ModelDownloadController(
+      downloadedFilesLoader: () async => [],
+      readinessChecker: (_) async => _readyCheck,
+      deleteModel: (_) async {},
+      backgroundDownloadClient: backgroundClient,
+    );
+
+    await controller.initialize();
+
+    expect(controller.phase, ModelDownloadPhase.failed);
+    expect(controller.lastErrorMessage, 'network unavailable');
+    expect(controller.isBusy, isTrue);
+  });
+
+  test('restores completed background download state', () async {
+    final tempDir = await Directory.systemTemp.createTemp(
+      'aya-background-controller-test',
+    );
+    ModelManager.debugModelsDirProvider = () async => tempDir;
+    final modelFile = File('${tempDir.path}/${_testModel.fileName}');
+    await modelFile.writeAsBytes(_ggufHeader);
+
+    final backgroundClient = _FakeBackgroundDownloadClient(
+      records: [
+        _backgroundRecord(
+          BackgroundModelDownloadStatus.complete,
+          progress: 1,
+          expectedFileSize: _ggufHeader.length,
+        ),
+      ],
+    );
+    final controller = ModelDownloadController(
+      downloadedFilesLoader: () async => [],
+      readinessChecker: (_) async => _readyCheck,
+      deleteModel: (_) async {},
+      backgroundDownloadClient: backgroundClient,
+    );
+
+    try {
+      await controller.initialize();
+
+      expect(controller.phase, ModelDownloadPhase.completed);
+      expect(controller.lastCompletedPath, modelFile.path);
+      expect(controller.completedDownloadVersion, 1);
+      expect(controller.downloaded.contains(_testModel.fileName), isTrue);
+    } finally {
+      ModelManager.debugReset();
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+    }
+  });
 }

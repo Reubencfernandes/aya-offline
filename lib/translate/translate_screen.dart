@@ -1,70 +1,33 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_recognition_error.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import '../app/aya_session_controller.dart';
+import '../audio/tts_locale_helper.dart';
 import '../widgets/animated_gradient_text.dart';
+import '../widgets/page_mode_switcher.dart';
 import 'language_option.dart';
-
-class TranslationHistoryItem {
-  final String id;
-  final TranslationLanguage sourceLanguage;
-  final TranslationLanguage targetLanguage;
-  final String sourceText;
-  final String translatedText;
-
-  TranslationHistoryItem({
-    String? id,
-    required this.sourceLanguage,
-    required this.targetLanguage,
-    required this.sourceText,
-    required this.translatedText,
-  }) : id = id ?? DateTime.now().microsecondsSinceEpoch.toString();
-
-  Map<String, Object?> toJson() => {
-    'id': id,
-    'sourceLanguage': sourceLanguage.name,
-    'targetLanguage': targetLanguage.name,
-    'sourceText': sourceText,
-    'translatedText': translatedText,
-  };
-
-  factory TranslationHistoryItem.fromJson(Map<String, Object?> json) {
-    return TranslationHistoryItem(
-      id: json['id'] as String?,
-      sourceLanguage: _languageByName(json['sourceLanguage'] as String?),
-      targetLanguage: _languageByName(json['targetLanguage'] as String?),
-      sourceText: json['sourceText'] as String? ?? '',
-      translatedText: json['translatedText'] as String? ?? '',
-    );
-  }
-}
-
-TranslationLanguage _languageByName(String? name) {
-  return translationLanguages.firstWhere(
-    (language) => language.name == name,
-    orElse: () => translationLanguages.first,
-  );
-}
+import 'translation_history_store.dart';
 
 class TranslateScreen extends StatefulWidget {
   final AyaSessionController controller;
   final VoidCallback onOpenSettings;
   final VoidCallback onSwitchToChat;
+  final TranslationHistoryStore? historyStore;
+  final ValueChanged<bool>? onHistoryPresenceChanged;
 
   const TranslateScreen({
     super.key,
     required this.controller,
     required this.onOpenSettings,
     required this.onSwitchToChat,
+    this.historyStore,
+    this.onHistoryPresenceChanged,
   });
 
   @override
@@ -75,9 +38,10 @@ class _TranslateScreenState extends State<TranslateScreen> {
   final _sourceController = TextEditingController();
   final SpeechToText _speech = SpeechToText();
   final FlutterTts _tts = FlutterTts();
+  late final TranslationHistoryStore _historyStore;
 
-  TranslationLanguage _sourceLanguage = translationLanguages.first;
-  TranslationLanguage _targetLanguage = translationLanguages[1];
+  TranslationLanguage _sourceLanguage = defaultSourceTranslationLanguage;
+  TranslationLanguage _targetLanguage = defaultTargetTranslationLanguage;
   String _translatedText = '';
   String _speechStatus = '';
   bool _speechReady = false;
@@ -92,16 +56,18 @@ class _TranslateScreenState extends State<TranslateScreen> {
   DateTime? _generationStartedAt;
   DateTime? _firstTokenAt;
   String _streamedTranslationText = '';
-  String? _lastTtsLocale;
+  String? _speakingHistoryId;
   final List<TranslationHistoryItem> _history = [];
 
   static const Duration _caretTickInterval = Duration(milliseconds: 500);
-  static const String _historyFileName = 'translation_history.json';
-  static const int _maxHistoryItems = 100;
+  static const int _maxHistoryItems =
+      FileTranslationHistoryStore.maxHistoryItems;
+  static const int _maxSourceCharacters = 600;
 
   @override
   void initState() {
     super.initState();
+    _historyStore = widget.historyStore ?? FileTranslationHistoryStore();
     _initializeVoiceTools();
     unawaited(_loadTranslationHistory());
     _sourceController.addListener(_onSourceChanged);
@@ -142,63 +108,23 @@ class _TranslateScreenState extends State<TranslateScreen> {
     _generationTimer = null;
   }
 
-  Future<File> _historyFile() async {
-    final directory = await getApplicationDocumentsDirectory();
-    return File('${directory.path}/$_historyFileName');
-  }
-
   Future<void> _loadTranslationHistory() async {
-    try {
-      final file = await _historyFile();
-      if (!await file.exists()) {
-        return;
-      }
-
-      final raw = jsonDecode(await file.readAsString());
-      if (raw is! List) {
-        return;
-      }
-
-      final items = raw
-          .whereType<Map>()
-          .map(
-            (item) => TranslationHistoryItem.fromJson(
-              Map<String, Object?>.from(item),
-            ),
-          )
-          .where(
-            (item) =>
-                item.sourceText.trim().isNotEmpty &&
-                item.translatedText.trim().isNotEmpty,
-          )
-          .take(_maxHistoryItems)
-          .toList();
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _history
-          ..clear()
-          ..addAll(items);
-      });
-    } catch (_) {
-      // History is a convenience cache; corrupt or unavailable files should not
-      // block translation.
+    final items = await _historyStore.load();
+    if (!mounted) {
+      return;
     }
+
+    setState(() {
+      _history
+        ..clear()
+        ..addAll(items);
+    });
+    widget.onHistoryPresenceChanged?.call(_history.isNotEmpty);
   }
 
   Future<void> _saveTranslationHistory() async {
-    try {
-      final file = await _historyFile();
-      final payload = jsonEncode(
-        _history.map((item) => item.toJson()).toList(),
-      );
-      await file.writeAsString(payload, flush: true);
-    } catch (_) {
-      // Keep translation usable even if local history cannot be written.
-    }
+    await _historyStore.save(_history);
+    widget.onHistoryPresenceChanged?.call(_history.isNotEmpty);
   }
 
   Future<void> _initializeVoiceTools() async {
@@ -235,7 +161,9 @@ class _TranslateScreenState extends State<TranslateScreen> {
     }
 
     setState(() {
-      _speechStatus = status;
+      _speechStatus = status == SpeechToText.listeningStatus
+          ? 'Listening...'
+          : status;
       _isListening = status == SpeechToText.listeningStatus;
     });
   }
@@ -268,21 +196,35 @@ class _TranslateScreenState extends State<TranslateScreen> {
       return;
     }
 
-    await _speech.listen(
-      onResult: _onSpeechResult,
-      localeId: _sourceLanguage.sttLocale,
-      listenFor: const Duration(seconds: 30),
-      pauseFor: const Duration(seconds: 4),
-      listenOptions: SpeechListenOptions(
-        partialResults: true,
-        listenMode: ListenMode.dictation,
-      ),
-    );
+    setState(() {
+      _isListening = true;
+      _speechStatus = 'Listening...';
+    });
+
+    try {
+      await _speech.listen(
+        onResult: _onSpeechResult,
+        localeId: _sourceLanguage.sttLocale,
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 4),
+        listenOptions: SpeechListenOptions(
+          partialResults: true,
+          listenMode: ListenMode.dictation,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isListening = false;
+        _speechStatus = '$error';
+      });
+    }
   }
 
   void _onSpeechResult(SpeechRecognitionResult result) {
+    final recognizedWords = _limitSourceText(result.recognizedWords);
     setState(() {
-      _sourceController.text = result.recognizedWords;
+      _sourceController.text = recognizedWords;
       _sourceController.selection = TextSelection.fromPosition(
         TextPosition(offset: _sourceController.text.length),
       );
@@ -351,6 +293,9 @@ class _TranslateScreenState extends State<TranslateScreen> {
     if (_isTranslating) {
       return;
     }
+
+    FocusScope.of(context).unfocus();
+    await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
 
     if (!mounted) return;
     setState(() {
@@ -443,6 +388,14 @@ class _TranslateScreenState extends State<TranslateScreen> {
     }
   }
 
+  String _limitSourceText(String text) {
+    if (text.characters.length <= _maxSourceCharacters) {
+      return text;
+    }
+
+    return text.characters.take(_maxSourceCharacters).toString();
+  }
+
   String _cleanModelOutput(String value) {
     var cleaned = value
         .replaceAll('<|END_OF_TURN_TOKEN|>', '')
@@ -491,18 +444,22 @@ class _TranslateScreenState extends State<TranslateScreen> {
     }
 
     final caretVisible = _isTranslating && _generationHalfSeconds.isEven;
-    return Text.rich(
-      TextSpan(
-        style: style,
-        children: [
-          TextSpan(text: _translatedText),
-          TextSpan(
-            text: caretVisible ? '▍' : ' ',
-            style: style.copyWith(
-              color: caretVisible ? Colors.white : Colors.transparent,
+    return Directionality(
+      textDirection: _targetLanguage.textDirection,
+      child: Text.rich(
+        TextSpan(
+          style: style,
+          children: [
+            TextSpan(text: _translatedText),
+            TextSpan(
+              text: caretVisible ? '▍' : ' ',
+              style: style.copyWith(
+                color: caretVisible ? Colors.white : Colors.transparent,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
+        textAlign: TextAlign.start,
       ),
     );
   }
@@ -571,6 +528,21 @@ class _TranslateScreenState extends State<TranslateScreen> {
     unawaited(_saveTranslationHistory());
   }
 
+  Future<void> _copyHistoryItem(TranslationHistoryItem item) async {
+    final text = item.translatedText.trim();
+    if (text.isEmpty) {
+      return;
+    }
+
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Translation copied to clipboard')),
+    );
+  }
+
   void _reorderHistory(int oldIndex, int newIndex) {
     if (newIndex > oldIndex) {
       newIndex -= 1;
@@ -596,34 +568,16 @@ class _TranslateScreenState extends State<TranslateScreen> {
       return;
     }
 
-    final locale = _targetLanguage.ttsLocale;
-
-    if (_lastTtsLocale != locale) {
-      try {
-        final availability = await _tts.isLanguageAvailable(locale);
-        final available = availability == true || availability == 1;
-        if (!available) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '${_targetLanguage.name} voice is not installed on this device.',
-              ),
-            ),
-          );
-          return;
-        }
-        await _tts.setLanguage(locale);
-        _lastTtsLocale = locale;
-      } catch (_) {
-        // Availability check not supported — fall through and try anyway.
-        await _tts.setLanguage(locale);
-        _lastTtsLocale = locale;
-      }
+    if (!await _prepareTtsLocale(_targetLanguage)) {
+      return;
     }
 
     if (!mounted) return;
-    setState(() => _isSpeaking = true);
+    await _tts.stop();
+    setState(() {
+      _isSpeaking = true;
+      _speakingHistoryId = null;
+    });
     try {
       await _tts.speak(text);
     } catch (error) {
@@ -636,6 +590,76 @@ class _TranslateScreenState extends State<TranslateScreen> {
         setState(() => _isSpeaking = false);
       }
     }
+  }
+
+  Future<void> _speakHistoryItem(TranslationHistoryItem item) async {
+    if (_speakingHistoryId == item.id) {
+      await _tts.stop();
+      if (!mounted) return;
+      setState(() => _speakingHistoryId = null);
+      return;
+    }
+
+    final text = item.translatedText.trim();
+    if (text.isEmpty) {
+      return;
+    }
+
+    if (!await _prepareTtsLocale(item.targetLanguage)) {
+      return;
+    }
+
+    if (!mounted) return;
+    await _tts.stop();
+    setState(() {
+      _isSpeaking = false;
+      _speakingHistoryId = item.id;
+    });
+    try {
+      await _tts.speak(text);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Text-to-speech failed: $error')));
+    } finally {
+      if (mounted && _speakingHistoryId == item.id) {
+        setState(() => _speakingHistoryId = null);
+      }
+    }
+  }
+
+  Future<bool> _prepareTtsLocale(TranslationLanguage language) async {
+    try {
+      final selection = await TtsLocaleHelper.configure(
+        _tts,
+        language.ttsLocale,
+        allowFallback: false,
+      );
+      if (selection.canSpeak) {
+        return true;
+      }
+    } catch (error) {
+      if (!mounted) {
+        return false;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Text-to-speech failed: $error')));
+      return false;
+    }
+
+    if (!mounted) {
+      return false;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '${language.name} voice is not installed on this device.',
+        ),
+      ),
+    );
+    return false;
   }
 
   Color get _themeColor {
@@ -687,19 +711,24 @@ class _TranslateScreenState extends State<TranslateScreen> {
             : 'Translation needs a downloaded model',
         subtitle: widget.controller.status,
         onOpenSettings: widget.onOpenSettings,
+        historySection: _history.isEmpty ? null : _buildHistorySection(),
       );
     }
 
     final modelName =
         widget.controller.selectedModel?.displayName.split(' ').last ??
         'Global';
+    final micStatusLabel = _isListening
+        ? 'Listening...'
+        : _speechStatus.isNotEmpty
+        ? 'Mic status: $_speechStatus'
+        : '';
 
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
         child: Column(
           children: [
-            // Top Nav
             Padding(
               padding: const EdgeInsets.symmetric(
                 horizontal: 16.0,
@@ -709,40 +738,11 @@ class _TranslateScreenState extends State<TranslateScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const SizedBox(width: 48),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextButton(
-                        onPressed: widget.onSwitchToChat,
-                        child: Text(
-                          'Ask',
-                          style: TextStyle(
-                            color: Colors.grey.shade600,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          border: Border.all(
-                            color: _themeColor.withValues(alpha: 0.3),
-                          ),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Text(
-                          'Translate',
-                          style: TextStyle(
-                            color: _themeColor,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
+                  AyaPageModeSwitcher(
+                    current: AyaPageMode.translate,
+                    activeColor: _themeColor,
+                    onTranslate: () {},
+                    onAsk: widget.onSwitchToChat,
                   ),
                   IconButton(
                     icon: const Icon(Icons.settings, color: Colors.black54),
@@ -902,24 +902,75 @@ class _TranslateScreenState extends State<TranslateScreen> {
                           controller: _sourceController,
                           minLines: 4,
                           maxLines: 6,
+                          maxLength: _maxSourceCharacters,
+                          maxLengthEnforcement: MaxLengthEnforcement.enforced,
+                          buildCounter:
+                              (
+                                context, {
+                                required currentLength,
+                                required isFocused,
+                                required maxLength,
+                              }) => Align(
+                                alignment: AlignmentDirectional.centerEnd,
+                                child: Text(
+                                  '$currentLength / $maxLength',
+                                  style: TextStyle(
+                                    color: currentLength >= _maxSourceCharacters
+                                        ? Theme.of(context).colorScheme.error
+                                        : Colors.grey.shade500,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
                           decoration: InputDecoration.collapsed(
-                            hintText: 'Write your translate here',
+                            hintText:
+                                'Write your translate here ($_maxSourceCharacters characters max)',
                             hintStyle: TextStyle(color: Colors.grey.shade400),
                           ),
+                          textDirection: _sourceLanguage.textDirection,
+                          textAlign: TextAlign.start,
                           onSubmitted: (_) => _translate(),
                         ),
                         const SizedBox(height: 8),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
-                            IconButton(
-                              icon: Icon(
-                                _isListening
-                                    ? Icons.stop_circle
-                                    : Icons.mic_none,
-                                color: Colors.grey.shade600,
+                            Tooltip(
+                              message: _isListening
+                                  ? 'Stop listening'
+                                  : 'Start voice input',
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(24),
+                                  onTap: _toggleListening,
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 120),
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      color: _isListening
+                                          ? _themeColor
+                                          : Colors.grey.shade100,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: _isListening
+                                            ? _themeColor
+                                            : Colors.grey.shade300,
+                                      ),
+                                    ),
+                                    child: Icon(
+                                      _isListening
+                                          ? Icons.stop
+                                          : Icons.mic_none,
+                                      color: _isListening
+                                          ? Colors.white
+                                          : Colors.grey.shade700,
+                                    ),
+                                  ),
+                                ),
                               ),
-                              onPressed: _toggleListening,
                             ),
                             const SizedBox(width: 8),
                             FilledButton.icon(
@@ -952,14 +1003,19 @@ class _TranslateScreenState extends State<TranslateScreen> {
                     ),
                   ),
 
-                  if (_speechStatus.isNotEmpty)
+                  if (micStatusLabel.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 8.0),
                       child: Text(
-                        'Mic status: $_speechStatus',
+                        micStatusLabel,
                         style: TextStyle(
-                          color: Colors.grey.shade500,
+                          color: _isListening
+                              ? _themeColor
+                              : Colors.grey.shade500,
                           fontSize: 12,
+                          fontWeight: _isListening
+                              ? FontWeight.w700
+                              : FontWeight.w500,
                         ),
                       ),
                     ),
@@ -1129,6 +1185,42 @@ class _TranslateScreenState extends State<TranslateScreen> {
                 Text(item.targetLanguage.flag),
                 const Spacer(),
                 IconButton(
+                  tooltip: _speakingHistoryId == item.id
+                      ? 'Stop speaking'
+                      : 'Speak translation',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 36,
+                    minHeight: 36,
+                  ),
+                  onPressed: () => _speakHistoryItem(item),
+                  icon: Icon(
+                    _speakingHistoryId == item.id
+                        ? Icons.stop_circle
+                        : Icons.volume_up_outlined,
+                    color: _speakingHistoryId == item.id
+                        ? _themeColor
+                        : Colors.grey.shade500,
+                    size: 21,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Copy translation',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 36,
+                    minHeight: 36,
+                  ),
+                  onPressed: () => _copyHistoryItem(item),
+                  icon: Icon(
+                    Icons.copy_outlined,
+                    color: Colors.grey.shade500,
+                    size: 20,
+                  ),
+                ),
+                IconButton(
                   tooltip: 'Delete',
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
@@ -1157,18 +1249,32 @@ class _TranslateScreenState extends State<TranslateScreen> {
               ],
             ),
             const SizedBox(height: 10),
-            Text(
-              item.sourceText,
-              style: TextStyle(color: Colors.grey.shade800),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+            Directionality(
+              textDirection: item.sourceLanguage.textDirection,
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
+                  item.sourceText,
+                  style: TextStyle(color: Colors.grey.shade800),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.start,
+                ),
+              ),
             ),
             const SizedBox(height: 10),
-            Text(
-              item.translatedText,
-              style: const TextStyle(fontWeight: FontWeight.w500),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+            Directionality(
+              textDirection: item.targetLanguage.textDirection,
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
+                  item.translatedText,
+                  style: const TextStyle(fontWeight: FontWeight.w500),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.start,
+                ),
+              ),
             ),
           ],
         ),
@@ -1282,58 +1388,67 @@ class _TranslationLockedState extends StatelessWidget {
   final String title;
   final String subtitle;
   final VoidCallback onOpenSettings;
+  final Widget? historySection;
 
   const _TranslationLockedState({
     required this.title,
     required this.subtitle,
     required this.onOpenSettings,
+    this.historySection,
   });
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Center(
-        child: Padding(
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: ListView(
           padding: const EdgeInsets.all(24),
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(28),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.translate,
-                  size: 68,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.headlineSmall,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  subtitle,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withAlpha(180),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: BorderRadius.circular(28),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.translate,
+                    size: 68,
+                    color: Theme.of(context).colorScheme.primary,
                   ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 18),
-                FilledButton.icon(
-                  onPressed: onOpenSettings,
-                  icon: const Icon(Icons.settings_outlined),
-                  label: const Text('Open settings'),
-                ),
-              ],
+                  const SizedBox(height: 16),
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withAlpha(180),
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    onPressed: onOpenSettings,
+                    icon: const Icon(Icons.settings_outlined),
+                    label: const Text('Open settings'),
+                  ),
+                ],
+              ),
             ),
-          ),
+            if (historySection != null) ...[
+              const SizedBox(height: 32),
+              historySection!,
+            ],
+          ],
         ),
       ),
     );

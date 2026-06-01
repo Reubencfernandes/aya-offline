@@ -25,8 +25,10 @@ static const llama_vocab* g_vocab = nullptr;
 static llama_sampler* g_sampler = nullptr;
 static std::mutex g_mutex;
 static bool g_should_stop = false;
-static std::vector<std::string> g_stream_tokens;
-static size_t g_stream_pos = 0;
+static bool g_stream_active = false;
+static bool g_stream_finished = false;
+static int g_stream_max_tokens = 0;
+static int g_stream_generated_tokens = 0;
 
 extern "C" {
 
@@ -259,8 +261,10 @@ Java_net_nativemind_flutter_1llama_FlutterLlamaPlugin_nativeGenerateStreamInit(
     }
     
     g_should_stop = false;
-    g_stream_tokens.clear();
-    g_stream_pos = 0;
+    g_stream_active = false;
+    g_stream_finished = false;
+    g_stream_max_tokens = max_tokens;
+    g_stream_generated_tokens = 0;
 
     const char* prompt_str = env->GetStringUTFChars(prompt, nullptr);
     std::string prompt_text(prompt_str);
@@ -277,6 +281,7 @@ Java_net_nativemind_flutter_1llama_FlutterLlamaPlugin_nativeGenerateStreamInit(
 
     if (llama_tokenize(g_vocab, prompt_text.c_str(), prompt_text.size(), prompt_tokens.data(), prompt_tokens.size(), true, true) < 0) {
         LOGE("Failed to tokenize prompt");
+        g_stream_finished = true;
         return;
     }
 
@@ -286,6 +291,7 @@ Java_net_nativemind_flutter_1llama_FlutterLlamaPlugin_nativeGenerateStreamInit(
     // Decode prompt
     if (llama_decode(g_context, batch) != 0) {
         LOGE("Failed to decode prompt");
+        g_stream_finished = true;
         return;
     }
     
@@ -300,35 +306,10 @@ Java_net_nativemind_flutter_1llama_FlutterLlamaPlugin_nativeGenerateStreamInit(
     llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(top_p, 1));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_top_k(top_k));
     llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(1234));
-    
-    // Pre-generate tokens and convert to strings
-    int n_pos = prompt_tokens.size();
-    for (int i = 0; i < max_tokens; i++) {
-        if (g_should_stop) break;
-        
-        llama_token new_token = llama_sampler_sample(g_sampler, g_context, -1);
-        
-        if (llama_vocab_is_eog(g_vocab, new_token)) {
-            break;
-        }
-        
-        // Convert token to text and store
-        char token_str[256] = {0};
-        int n = llama_token_to_piece(g_vocab, new_token, token_str, sizeof(token_str) - 1, 0, true);
-        if (n > 0) {
-            token_str[n] = '\0';
-            g_stream_tokens.push_back(std::string(token_str));
-        }
-        
-        batch = llama_batch_get_one(&new_token, 1);
-        n_pos++;
-        
-        if (llama_decode(g_context, batch) != 0) {
-            break;
-        }
-    }
-    
-    LOGI("Pre-generated %zu tokens for streaming", g_stream_tokens.size());
+
+    g_stream_active = true;
+    g_stream_finished = false;
+    LOGI("Stream generation ready");
 }
 
 // Get next token in stream
@@ -339,12 +320,37 @@ Java_net_nativemind_flutter_1llama_FlutterLlamaPlugin_nativeGenerateStreamNext(
 ) {
     std::lock_guard<std::mutex> lock(g_mutex);
     
-    if (g_should_stop || g_stream_pos >= g_stream_tokens.size()) {
+    if (!g_stream_active || g_stream_finished || g_should_stop || !g_context || !g_vocab || !g_sampler ||
+            g_stream_generated_tokens >= g_stream_max_tokens) {
+        g_stream_finished = true;
         return nullptr;
     }
-    
-    const std::string& token = g_stream_tokens[g_stream_pos++];
-    return env->NewStringUTF(token.c_str());
+
+    llama_token new_token = llama_sampler_sample(g_sampler, g_context, -1);
+
+    if (llama_vocab_is_eog(g_vocab, new_token)) {
+        g_stream_finished = true;
+        return nullptr;
+    }
+
+    char token_str[256] = {0};
+    int n = llama_token_to_piece(g_vocab, new_token, token_str, sizeof(token_str) - 1, 0, true);
+
+    llama_batch batch = llama_batch_get_one(&new_token, 1);
+    if (llama_decode(g_context, batch) != 0) {
+        LOGE("Failed to decode stream token");
+        g_stream_finished = true;
+        return nullptr;
+    }
+
+    g_stream_generated_tokens++;
+
+    if (n <= 0) {
+        return env->NewStringUTF("");
+    }
+
+    token_str[n] = '\0';
+    return env->NewStringUTF(token_str);
 }
 
 // End streaming generation
@@ -356,8 +362,10 @@ Java_net_nativemind_flutter_1llama_FlutterLlamaPlugin_nativeGenerateStreamEnd(
     std::lock_guard<std::mutex> lock(g_mutex);
     
     LOGI("Ending stream generation");
-    g_stream_tokens.clear();
-    g_stream_pos = 0;
+    g_stream_active = false;
+    g_stream_finished = true;
+    g_stream_max_tokens = 0;
+    g_stream_generated_tokens = 0;
 }
 
 // Get model information

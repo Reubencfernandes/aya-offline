@@ -36,7 +36,7 @@ android {
         versionName = flutter.versionName
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters += listOf("arm64-v8a")
         }
     }
 
@@ -64,6 +64,10 @@ android {
             }
         }
     }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.17.0")
 }
 
 flutter {

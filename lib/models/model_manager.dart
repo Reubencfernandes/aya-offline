@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:background_downloader/background_downloader.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -20,6 +21,11 @@ Future<Directory> _bestStorageDir() async {
 }
 
 const int _downloadHeadroomBytes = 256 * 1024 * 1024;
+const String _activeModelFileName = 'active_model.txt';
+const String modelDownloadTaskGroup = 'aya-model-downloads';
+const String _modelsSubdirectory = 'models';
+
+bool _backgroundDownloaderConfigured = false;
 
 enum ModelDownloadPhase {
   idle,
@@ -118,7 +124,7 @@ class ModelManager {
     }
 
     final baseDir = await _bestStorageDir();
-    final dir = Directory('${baseDir.path}/models');
+    final dir = Directory('${baseDir.path}/$_modelsSubdirectory');
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
@@ -133,6 +139,40 @@ class ModelManager {
 
   static Future<String> _partialModelPath(AyaModel model) async {
     return '${await modelPath(model)}.part';
+  }
+
+  static Future<void> configureBackgroundDownloaderStorage() async {
+    if (_backgroundDownloaderConfigured) {
+      return;
+    }
+
+    await FileDownloader().configure(
+      androidConfig: (Config.useExternalStorage, Config.always),
+      iOSConfig: (Config.resourceTimeout, const Duration(hours: 8)),
+    );
+    _backgroundDownloaderConfigured = true;
+  }
+
+  static DownloadTask backgroundDownloadTask(AyaModel model) {
+    return DownloadTask(
+      taskId: 'aya-model-${model.fileName}',
+      url: model.downloadUrl,
+      filename: model.fileName,
+      directory: _modelsSubdirectory,
+      baseDirectory: BaseDirectory.applicationDocuments,
+      group: modelDownloadTaskGroup,
+      updates: Updates.statusAndProgress,
+      retries: 7,
+      allowPause: true,
+      priority: 0,
+      metaData: model.fileName,
+      displayName: '${model.displayName} ${model.quant}',
+    );
+  }
+
+  static Future<File> get _activeModelFile async {
+    final dir = await _modelsDir;
+    return File('${dir.path}/$_activeModelFileName');
   }
 
   /// Check if a model is already downloaded.
@@ -207,6 +247,17 @@ class ModelManager {
     return files;
   }
 
+  static Future<void> validateDownloadedModel(
+    AyaModel model, {
+    int expectedBytes = -1,
+  }) async {
+    await _validateDownloadedModel(
+      File(await modelPath(model)),
+      model: model,
+      expectedBytes: expectedBytes,
+    );
+  }
+
   /// Find the first downloaded model (for auto-loading on startup).
   static Future<AyaModel?> firstDownloaded() async {
     final files = await downloadedFiles();
@@ -219,6 +270,48 @@ class ModelManager {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Persist the last successfully loaded model so startup can restore it.
+  static Future<void> saveActiveModel(AyaModel model) async {
+    final file = await _activeModelFile;
+    await file.writeAsString(model.fileName, flush: true);
+  }
+
+  static Future<void> clearActiveModel() async {
+    await _deleteQuietly(await _activeModelFile);
+  }
+
+  static Future<AyaModel?> activeDownloadedModel() async {
+    final fileName = await _readActiveModelFileName();
+    if (fileName == null) {
+      return null;
+    }
+
+    AyaModel model;
+    try {
+      model = ayaModels.firstWhere((item) => item.fileName == fileName);
+    } catch (_) {
+      await clearActiveModel();
+      return null;
+    }
+
+    if (await isDownloaded(model)) {
+      return model;
+    }
+
+    await clearActiveModel();
+    return null;
+  }
+
+  static Future<String?> _readActiveModelFileName() async {
+    final file = await _activeModelFile;
+    if (!await file.exists()) {
+      return null;
+    }
+
+    final fileName = (await file.readAsString()).trim();
+    return fileName.isEmpty ? null : fileName;
   }
 
   /// Download a model from Hugging Face with progress reporting.
@@ -616,10 +709,12 @@ class ModelManager {
   @visibleForTesting
   static void debugReset() {
     debugModelsDirProvider = null;
+    _backgroundDownloaderConfigured = false;
   }
 
   /// Delete a downloaded model.
   static Future<void> delete(AyaModel model) async {
+    final activeFileName = await _readActiveModelFileName();
     final finalFile = File(await modelPath(model));
     final partialFile = File(await _partialModelPath(model));
 
@@ -628,6 +723,9 @@ class ModelManager {
     }
     if (await partialFile.exists()) {
       await partialFile.delete();
+    }
+    if (activeFileName == model.fileName) {
+      await clearActiveModel();
     }
   }
 }

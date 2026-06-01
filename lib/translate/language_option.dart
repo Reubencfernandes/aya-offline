@@ -1,9 +1,12 @@
+import 'package:flutter/widgets.dart';
+
 class TranslationLanguage {
   final String name;
   final String translationLabel;
   final String sttLocale;
   final String ttsLocale;
   final String flag;
+  final TextDirection textDirection;
 
   const TranslationLanguage({
     required this.name,
@@ -11,10 +14,13 @@ class TranslationLanguage {
     required this.sttLocale,
     required this.ttsLocale,
     required this.flag,
+    this.textDirection = TextDirection.ltr,
   });
+
+  bool get isRtl => textDirection == TextDirection.rtl;
 }
 
-const translationLanguages = [
+const _translationLanguages = [
   TranslationLanguage(
     name: 'English',
     translationLabel: 'English',
@@ -238,6 +244,7 @@ const translationLanguages = [
     sttLocale: 'ar_SA',
     ttsLocale: 'ar-SA',
     flag: '🇸🇦',
+    textDirection: TextDirection.rtl,
   ),
   TranslationLanguage(
     name: 'Persian',
@@ -245,6 +252,7 @@ const translationLanguages = [
     sttLocale: 'fa_IR',
     ttsLocale: 'fa-IR',
     flag: '🇮🇷',
+    textDirection: TextDirection.rtl,
   ),
   TranslationLanguage(
     name: 'Urdu',
@@ -252,6 +260,7 @@ const translationLanguages = [
     sttLocale: 'ur_PK',
     ttsLocale: 'ur-PK',
     flag: '🇵🇰',
+    textDirection: TextDirection.rtl,
   ),
   TranslationLanguage(
     name: 'Turkish',
@@ -273,6 +282,7 @@ const translationLanguages = [
     sttLocale: 'he_IL',
     ttsLocale: 'he-IL',
     flag: '🇮🇱',
+    textDirection: TextDirection.rtl,
   ),
   TranslationLanguage(
     name: 'Hindi',
@@ -485,3 +495,31 @@ const translationLanguages = [
     flag: '🇿🇦',
   ),
 ];
+
+final List<TranslationLanguage> translationLanguages = List.unmodifiable(
+  [..._translationLanguages]
+    ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())),
+);
+
+final TranslationLanguage defaultSourceTranslationLanguage =
+    translationLanguageByName('English');
+
+final TranslationLanguage defaultTargetTranslationLanguage =
+    translationLanguageByName('Spanish');
+
+TranslationLanguage translationLanguageByName(
+  String? name, {
+  TranslationLanguage? fallback,
+}) {
+  return translationLanguages.firstWhere(
+    (language) => language.name == name,
+    orElse: () => fallback ?? _fallbackTranslationLanguage,
+  );
+}
+
+TranslationLanguage get _fallbackTranslationLanguage {
+  return translationLanguages.firstWhere(
+    (language) => language.name == 'English',
+    orElse: () => translationLanguages.first,
+  );
+}

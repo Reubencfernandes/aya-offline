@@ -6,18 +6,23 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
 import '../app/aya_session_controller.dart';
+import '../audio/tts_language_resolver.dart';
+import '../audio/tts_locale_helper.dart';
 import '../engine/engine.dart';
 import '../widgets/animated_gradient_text.dart';
+import '../widgets/page_mode_switcher.dart';
 
 class ChatMessage {
   final String text;
   final bool isUser;
   final bool isLoading;
+  final String? ttsLocale;
 
   const ChatMessage({
     required this.text,
     required this.isUser,
     this.isLoading = false,
+    this.ttsLocale,
   });
 }
 
@@ -102,7 +107,7 @@ class _ChatScreenState extends State<ChatScreen> {
     SystemChannels.textInput.invokeMethod<void>('TextInput.show');
   }
 
-  Future<void> _toggleSpeak(int index, String text) async {
+  Future<void> _toggleSpeak(int index, String text, String? locale) async {
     if (text.trim().isEmpty) return;
 
     if (_speakingIndex == index) {
@@ -116,6 +121,16 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     setState(() => _speakingIndex = index);
     try {
+      final fallbackLocale = devicePreferredTtsLocale();
+      final selection = await TtsLocaleHelper.configure(
+        _tts,
+        locale ?? fallbackLocale,
+        fallbackLocale: fallbackLocale,
+      );
+      if (!selection.canSpeak) {
+        if (mounted) setState(() => _speakingIndex = null);
+        return;
+      }
       await _tts.speak(text);
     } catch (_) {
       // Swallowed — TTS errors are non-fatal; we just reset the icon.
@@ -171,6 +186,10 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    final ttsLocale = inferTtsLocaleFromText(
+      text,
+      fallbackLocale: devicePreferredTtsLocale(),
+    );
     final history = _messages
         .where((message) => !message.isLoading)
         .map(
@@ -189,9 +208,16 @@ class _ChatScreenState extends State<ChatScreen> {
     _streamUiFlushTimer = null;
     _streamedAssistantText = '';
     setState(() {
-      _messages.add(ChatMessage(text: text, isUser: true));
       _messages.add(
-        const ChatMessage(text: '', isUser: false, isLoading: true),
+        ChatMessage(text: text, isUser: true, ttsLocale: ttsLocale),
+      );
+      _messages.add(
+        ChatMessage(
+          text: '',
+          isUser: false,
+          isLoading: true,
+          ttsLocale: ttsLocale,
+        ),
       );
       _isGenerating = true;
       _generationSeconds = 0;
@@ -237,10 +263,12 @@ class _ChatScreenState extends State<ChatScreen> {
       _streamUiFlushTimer?.cancel();
       _streamUiFlushTimer = null;
       if (mounted) {
+        final previous = _messages.last;
         setState(() {
           _messages[_messages.length - 1] = ChatMessage(
             text: 'Error: $error',
             isUser: false,
+            ttsLocale: previous.ttsLocale,
           );
         });
       }
@@ -279,10 +307,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _flushAssistantStream() {
     if (!mounted || _messages.isEmpty) return;
+    final previous = _messages.last;
     setState(() {
       _messages[_messages.length - 1] = ChatMessage(
         text: _cleanModelOutput(_streamedAssistantText),
         isUser: false,
+        ttsLocale: previous.ttsLocale,
       );
     });
     _scrollToBottom();
@@ -318,7 +348,6 @@ class _ChatScreenState extends State<ChatScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Custom Top Navbar
             Padding(
               padding: const EdgeInsets.symmetric(
                 horizontal: 16.0,
@@ -328,37 +357,11 @@ class _ChatScreenState extends State<ChatScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const SizedBox(width: 48),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade300),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Text(
-                          'Ask',
-                          style: TextStyle(
-                            color: _themeColor,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      TextButton(
-                        onPressed: widget.onSwitchToTranslate,
-                        child: Text(
-                          'Translate',
-                          style: TextStyle(
-                            color: Colors.grey.shade600,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
+                  AyaPageModeSwitcher(
+                    current: AyaPageMode.ask,
+                    activeColor: _themeColor,
+                    onTranslate: widget.onSwitchToTranslate,
+                    onAsk: () {},
                   ),
                   Row(
                     children: [
@@ -419,8 +422,11 @@ class _ChatScreenState extends State<ChatScreen> {
                               : null,
                           isStreaming: isStreamingBubble,
                           isSpeaking: _speakingIndex == index,
-                          onSpeak: () =>
-                              _toggleSpeak(index, _messages[index].text),
+                          onSpeak: () => _toggleSpeak(
+                            index,
+                            _messages[index].text,
+                            _messages[index].ttsLocale,
+                          ),
                         );
                       },
                     ),

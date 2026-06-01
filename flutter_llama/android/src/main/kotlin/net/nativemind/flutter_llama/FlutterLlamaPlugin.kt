@@ -29,16 +29,26 @@ class FlutterLlamaPlugin : FlutterPlugin, MethodCallHandler, EventChannel.Stream
 
         init {
             try {
-                // Load llama.cpp libraries in correct order
-                System.loadLibrary("c++_shared")
-                System.loadLibrary("ggml")
-                System.loadLibrary("ggml-base")
-                System.loadLibrary("ggml-cpu")
-                System.loadLibrary("llama")
-                System.loadLibrary("flutter_llama_bridge")
+                loadLibrary("c++_shared")
+                loadLibrary("ggml-base")
+                loadLibrary("ggml-cpu")
+                loadLibrary("ggml-vulkan", required = false)
+                loadLibrary("ggml")
+                loadLibrary("llama")
+                loadLibrary("flutter_llama_bridge")
                 Log.d(TAG, "Native libraries loaded successfully")
             } catch (e: UnsatisfiedLinkError) {
                 Log.e(TAG, "Failed to load native libraries: ${e.message}")
+            }
+        }
+
+        private fun loadLibrary(name: String, required: Boolean = true) {
+            try {
+                System.loadLibrary(name)
+                Log.d(TAG, "Loaded native library: $name")
+            } catch (e: UnsatisfiedLinkError) {
+                if (required) throw e
+                Log.d(TAG, "Optional native library not available: $name")
             }
         }
     }
@@ -377,4 +387,3 @@ class FlutterLlamaPlugin : FlutterPlugin, MethodCallHandler, EventChannel.Stream
         val contextSize: Int
     )
 }
-
